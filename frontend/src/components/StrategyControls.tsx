@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { StrategyParams, StrategyMeta } from "../types";
+import type { StrategyParams, StrategyMeta } from "../types";
 
 const INTERVALS = ["max", "1w", "1d", "6h", "1h"];
 
