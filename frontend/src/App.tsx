@@ -1,5 +1,5 @@
-import MarketSearch from "./components/MarketSearch";
+import BacktestConsole from "./pages/BacktestConsole";
 
 export default function App() {
-  return <MarketSearch />;
+  return <BacktestConsole />;
 }

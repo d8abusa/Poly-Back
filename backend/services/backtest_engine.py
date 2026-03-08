@@ -9,12 +9,59 @@ measuring P&L as (exit_price - entry_price) × shares.
 This mirrors how market makers and active traders operate on Polymarket.
 """
 
+import logging
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
 from typing import List
 
-from ..models.schemas import BacktestRequest, BacktestResult
+from ..models.schemas import BacktestRequest, BacktestResult, BatchBacktestResult
+
+log = logging.getLogger(__name__)
+
+
+def run_batch(
+    requests_with_histories: list[tuple[BacktestRequest, list]],
+    fetch_duration_ms: float = 0.0,
+) -> BatchBacktestResult:
+    """
+    Run a backtest for each (request, history) pair and collect results.
+
+    Failures in individual markets are recorded as failed BacktestResults
+    without aborting the rest of the batch.
+    """
+    results: list[BacktestResult] = []
+    for req, history in requests_with_histories:
+        try:
+            engine = PredictionMarketBacktester(req, history)
+            result = engine.run()
+        except Exception as exc:
+            log.error("batch run: engine failed for %s — %s", req.condition_id, exc)
+            result = BacktestResult(
+                success=False,
+                error=str(exc),
+                condition_id=req.condition_id,
+                initial_capital=req.initial_capital,
+                final_value=req.initial_capital,
+                total_return=0, sharpe_ratio=0, max_drawdown=0,
+                total_trades=0, win_rate=0,
+                equity_curve=[], trades=[],
+            )
+        results.append(result)
+
+    succeeded = sum(1 for r in results if r.success)
+    failed = len(results) - succeeded
+    log.info(
+        "batch run complete: %d succeeded, %d failed (fetch %.0f ms)",
+        succeeded, failed, fetch_duration_ms,
+    )
+    return BatchBacktestResult(
+        total=len(results),
+        succeeded=succeeded,
+        failed=failed,
+        fetch_duration_ms=round(fetch_duration_ms, 1),
+        results=results,
+    )
 
 
 class PredictionMarketBacktester:

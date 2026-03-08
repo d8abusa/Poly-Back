@@ -3,8 +3,13 @@ Polymarket API client — wraps public CLOB and Gamma APIs.
 Structured with hooks for authenticated endpoints when an account is added.
 """
 
+import asyncio
+import logging
+import time
 import httpx
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 CLOB_BASE = "https://clob.polymarket.com"
 GAMMA_BASE = "https://gamma-api.polymarket.com"
@@ -73,6 +78,46 @@ class PolymarketClient:
         resp = await self._client.get(f"{CLOB_BASE}/prices-history", params=params)
         resp.raise_for_status()
         return resp.json().get("history", [])
+
+    # ── Batch price history (concurrent) ────────────────────────────────────
+
+    async def fetch_market_histories_batch(
+        self,
+        token_ids: list[str],
+        interval: str = "max",
+        fidelity: int = 60,
+    ) -> tuple[dict[str, list], float]:
+        """
+        Fetch price history for multiple markets concurrently via asyncio.gather.
+
+        Returns (results, elapsed_ms) where results maps token_id → history list.
+        Per-market failures are logged as warnings and stored as [] without
+        aborting the rest of the batch.
+        """
+        log.info("batch fetch: %d token(s), interval=%s", len(token_ids), interval)
+        t0 = time.perf_counter()
+
+        async def _safe_fetch(token_id: str) -> tuple[str, list]:
+            try:
+                history = await self.get_price_history(
+                    token_id, interval=interval, fidelity=fidelity
+                )
+                return token_id, history
+            except Exception as exc:
+                log.warning("batch fetch: token %s failed — %s", token_id, exc)
+                return token_id, []
+
+        pairs: list[tuple[str, list]] = await asyncio.gather(
+            *(_safe_fetch(tid) for tid in token_ids)
+        )
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        succeeded = sum(1 for _, h in pairs if h)
+        log.info(
+            "batch fetch complete: %d/%d succeeded in %.0f ms",
+            succeeded, len(token_ids), elapsed_ms,
+        )
+        return dict(pairs), elapsed_ms
 
     # ── Tags ─────────────────────────────────────────────────────────────────
 

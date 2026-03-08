@@ -1,21 +1,26 @@
-from fastapi import APIRouter
-from ..services.strategies.registry import STRATEGIES
+from fastapi import APIRouter, HTTPException
+
+from ..strategies import ALL_STRATEGIES, STRATEGY_MAP
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
-_HIDDEN = {"threshold"}  # legacy alias — not shown in UI
-
-
-def _to_label(key: str) -> str:
-    return key.replace("_", " ").title()
+_HIDDEN: set[str] = set()  # reserve for future legacy aliases
 
 
 @router.get("")
-def list_strategies():
+async def list_strategies():
     return {
         "strategies": [
-            {"id": k, "label": _to_label(k)}
-            for k in STRATEGIES
-            if k not in _HIDDEN
+            s.model_dump()
+            for s in ALL_STRATEGIES
+            if s.id not in _HIDDEN
         ]
     }
+
+
+@router.get("/{strategy_id}")
+async def get_strategy(strategy_id: str):
+    s = STRATEGY_MAP.get(strategy_id)
+    if not s:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' not found")
+    return s.model_dump()
