@@ -1,5 +1,74 @@
 // ── Domain types shared across the entire component tree ──────────────────────
 
+export type ExecutionMode  = "auto" | "confirm" | "alert_only";
+export type SignalStatus   = "pending" | "approved" | "rejected" | "auto_executed";
+
+export interface Signal {
+  id:               string;
+  market_id:        string;
+  strategy:         string;
+  side:             "BUY" | "SELL";
+  entry_price:      number;
+  target_price:     number;
+  stop_loss:        number | null;
+  suggested_size:   number;
+  suggested_shares: number;
+  expected_edge:    number;
+  maker_edge:       number;
+  delta_taker:      number;
+  confidence:       number;
+  reasoning:        string;
+  execution_mode:   ExecutionMode;
+  status:           SignalStatus;
+  created_at:       string;
+  resolved_at:      string | null;
+}
+
+export interface Position {
+  id:            string;
+  signal_id:     string;
+  market_id:     string;
+  market_title:  string;
+  strategy:      string;
+  side:          "YES" | "NO";
+  entry_price:   number;
+  current_prob:  number;
+  exit_target:   number;
+  stop_loss:     number | null;
+  shares:        number;
+  capital:       number;
+  status:        "open" | "closed";
+  entry_date:    string;
+  closed_at:     string | null;
+  realized_pnl:  number | null;
+}
+
+export interface PositionSummary {
+  total_unrealized_pnl: number;
+  open_count:           number;
+  capital_deployed:     number;
+  today_realized:       number;
+  max_drawdown:         number;
+  win_rate:             number;
+  profitable_count:     number;
+  at_risk_count:        number;
+}
+
+export interface Alert {
+  id:             string;
+  signal_id:      string;
+  market_id:      string;
+  strategy:       string;
+  side:           string;
+  entry_price:    number;
+  suggested_size: number;
+  confidence:     number;
+  reasoning:      string;
+  error:          string | null;
+  read:           boolean;
+  created_at:     string;
+}
+
 export interface Market {
   id: string;
   condition_id: string | null;
@@ -26,12 +95,15 @@ export interface StrategyMeta {
 }
 
 export interface StrategyParams {
-  strategy: string;
   entry_threshold: number;
-  exit_threshold: number;
-  stop_loss: number | null;
-  initial_capital: number;
-  interval: string;
+  exit_threshold:  number;
+  stop_loss:       number | null;
+  zscore_window:   number;
+  zscore_entry:    number;
+  zscore_exit:     number;
+  zscore_stop:     number;
+  kelly_fraction:  number;
+  mm_spread:       number;
 }
 
 export interface TradeEntry {

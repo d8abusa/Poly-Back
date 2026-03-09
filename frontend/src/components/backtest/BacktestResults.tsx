@@ -1,4 +1,4 @@
-import { BatchBacktestResult, BacktestResult } from "../../types";
+import type { BatchBacktestResult, BacktestResult } from "../../types";
 import EquityChart from "../charts/EquityChart";
 import PnLDistribution from "../charts/PnLDistribution";
 
@@ -13,8 +13,8 @@ function SingleResult({ result }: { result: BacktestResult }) {
         background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)",
         borderRadius: 8, padding: "12px 14px", marginBottom: 10,
       }}>
-        <div style={{ fontSize: 10, color: "#ef4444", marginBottom: 4 }}>
-          {result.condition_id}
+        <div style={{ fontSize: 10, color: "#ef4444", marginBottom: 4, fontFamily: "IBM Plex Mono, monospace" }}>
+          {result.condition_id.slice(0, 16)}…
         </div>
         <div style={{ fontSize: 11, color: "var(--muted2)" }}>{result.error}</div>
       </div>

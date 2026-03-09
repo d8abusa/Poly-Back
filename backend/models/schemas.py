@@ -1,6 +1,9 @@
-from pydantic import BaseModel
-from typing import Optional, List, Any, Dict
+import uuid
+from datetime import datetime, timezone
+from typing import Optional, List, Any, Dict, Literal
 from enum import Enum
+
+from pydantic import BaseModel, Field
 
 
 class SortOrder(str, Enum):
@@ -65,17 +68,72 @@ class MarketSummary(BaseModel):
 class BacktestRequest(BaseModel):
     condition_id: str
     token_id: str
-    strategy: str = "threshold"      # threshold | momentum
-    entry_threshold: float = 0.30    # buy when prob <= this
-    exit_threshold: float = 0.70     # sell when prob >= this
-    stop_loss: Optional[float] = None  # exit if prob drops below this (loss cut)
-    initial_capital: float = 1000.0
-    interval: str = "max"            # 1m | 1h | 6h | 1d | 1w | max
+    strategy: str = "threshold"
+    entry_threshold: float = Field(0.30, ge=0.01, le=0.99)
+    exit_threshold:  float = Field(0.70, ge=0.01, le=0.99)
+    stop_loss:       Optional[float] = Field(None, ge=0.01, le=0.99)
+    initial_capital: float = Field(1000.0, gt=0)
+    interval: str = "max"
+
+    # Z-Score Reversion
+    zscore_window: int   = Field(20,  ge=5,   le=100)
+    zscore_entry:  float = Field(1.5, ge=0.5, le=4.0)
+    zscore_exit:   float = Field(0.0, ge=-2.0, le=2.0)
+    zscore_stop:   float = Field(3.0, ge=1.0, le=6.0)
+
+    # Kelly Criterion
+    kelly_fraction: float = Field(0.5, ge=0.1, le=1.0)
+
+    # Market Making
+    mm_spread: float = Field(0.04, ge=0.01, le=0.20)
 
 
 class BatchMarketInput(BaseModel):
     condition_id: str
     token_id: str
+
+
+class ExecutionMode(str, Enum):
+    auto        = "auto"
+    confirm     = "confirm"
+    alert_only  = "alert_only"
+
+
+class SignalStatus(str, Enum):
+    pending       = "pending"
+    approved      = "approved"
+    rejected      = "rejected"
+    auto_executed = "auto_executed"
+
+
+class SignalSchema(BaseModel):
+    id:              str   = Field(default_factory=lambda: str(uuid.uuid4()))
+    market_id:       str
+    strategy:        str
+    side:            Literal["BUY", "SELL"]
+    entry_price:     float
+    target_price:    float
+    stop_loss:       Optional[float] = None
+    suggested_size:  int
+    suggested_shares: float
+    expected_edge:   float
+    maker_edge:      float
+    delta_taker:     float
+    confidence:      float
+    reasoning:       str
+    execution_mode:  ExecutionMode = ExecutionMode.confirm
+    status:          SignalStatus  = SignalStatus.pending
+    created_at:      str  = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    resolved_at:     Optional[str] = None
+
+
+class SignalApproveRequest(BaseModel):
+    modified_size: Optional[int] = None
+
+
+class SignalModifyRequest(BaseModel):
+    size:  int
+    price: Optional[float] = None
 
 
 class BatchBacktestRequest(BaseModel):
@@ -86,6 +144,7 @@ class BatchBacktestRequest(BaseModel):
     stop_loss: Optional[float] = None
     initial_capital: float = 1000.0
     interval: str = "max"
+    execution_mode: ExecutionMode = ExecutionMode.confirm
 
 
 class BacktestResult(BaseModel):

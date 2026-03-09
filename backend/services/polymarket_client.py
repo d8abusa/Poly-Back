@@ -126,6 +126,100 @@ class PolymarketClient:
         resp.raise_for_status()
         return resp.json()
 
+    # ── Live market data (public CLOB) ──────────────────────────────────────
+
+    async def get_order_book(self, token_id: str) -> dict:
+        """Returns {bids: [{price, size}], asks: [{price, size}]}."""
+        resp = await self._client.get(f"{CLOB_BASE}/book", params={"token_id": token_id})
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "bids": [{"price": float(b["price"]), "size": float(b["size"])} for b in data.get("bids", [])],
+            "asks": [{"price": float(a["price"]), "size": float(a["size"])} for a in data.get("asks", [])],
+        }
+
+    async def get_recent_trades(self, token_id: str, limit: int = 20) -> list:
+        """Returns recent matched trades for a token."""
+        resp = await self._client.get(
+            f"{CLOB_BASE}/trades",
+            params={"token_id": token_id, "limit": limit},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        trades = data.get("data", data) if isinstance(data, dict) else data
+        return [
+            {
+                "price":      float(t.get("price", 0)),
+                "size":       float(t.get("size", 0)),
+                "side":       t.get("side", ""),
+                "match_time": t.get("match_time") or t.get("last_update") or "",
+            }
+            for t in trades[:limit]
+        ]
+
+    async def get_last_price(self, token_id: str) -> Optional[float]:
+        try:
+            resp = await self._client.get(f"{CLOB_BASE}/last-trade-price", params={"token_id": token_id})
+            resp.raise_for_status()
+            return float(resp.json().get("price", 0))
+        except Exception:
+            return None
+
+    async def get_midpoint(self, token_id: str) -> Optional[float]:
+        try:
+            resp = await self._client.get(f"{CLOB_BASE}/midpoint", params={"token_id": token_id})
+            resp.raise_for_status()
+            return float(resp.json().get("mid", 0))
+        except Exception:
+            return None
+
+    async def get_market_snapshot(self, token_id: str, condition_id: str) -> dict:
+        """Single call that fetches order book, recent trades, last price, and market status concurrently."""
+        import asyncio
+
+        book_task    = asyncio.create_task(self._safe(self.get_order_book(token_id),    {"bids": [], "asks": []}))
+        trades_task  = asyncio.create_task(self._safe(self.get_recent_trades(token_id), []))
+        price_task   = asyncio.create_task(self._safe(self.get_last_price(token_id),    None))
+        mid_task     = asyncio.create_task(self._safe(self.get_midpoint(token_id),      None))
+        market_task  = asyncio.create_task(self._safe(self.get_market(condition_id),    {}))
+
+        book, trades, last_price, midpoint, market = await asyncio.gather(
+            book_task, trades_task, price_task, mid_task, market_task,
+        )
+
+        bids = book.get("bids", [])
+        asks = book.get("asks", [])
+        best_bid = bids[0]["price"] if bids else None
+        best_ask = asks[0]["price"] if asks else None
+        spread   = round(best_ask - best_bid, 4) if best_bid and best_ask else None
+
+        return {
+            "token_id":     token_id,
+            "condition_id": condition_id,
+            "last_price":   last_price,
+            "midpoint":     midpoint,
+            "best_bid":     best_bid,
+            "best_ask":     best_ask,
+            "spread":       spread,
+            "bids":         bids[:10],
+            "asks":         asks[:10],
+            "recent_trades": trades,
+            "market": {
+                "title":    market.get("question") or market.get("title", ""),
+                "active":   market.get("active", True),
+                "closed":   market.get("closed", False),
+                "end_date": market.get("end_date_iso") or market.get("endDateIso") or market.get("end_date", ""),
+                "outcome":  market.get("outcome"),
+            },
+        }
+
+    @staticmethod
+    async def _safe(coro, default):
+        try:
+            return await coro
+        except Exception:
+            return default
+
     # ── Placeholder: authenticated endpoints (future) ────────────────────────
 
     async def get_balance(self) -> dict:
@@ -148,5 +242,6 @@ _client: Optional[PolymarketClient] = None
 def get_client() -> PolymarketClient:
     global _client
     if _client is None:
-        _client = PolymarketClient()
+        from ..config import settings
+        _client = PolymarketClient(api_key=settings.api_key)
     return _client

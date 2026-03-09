@@ -1,4 +1,4 @@
-import { HistoryRun } from "../../types";
+import type { HistoryRun } from "../../types";
 import EquityChart from "../charts/EquityChart";
 
 interface RunCardProps {

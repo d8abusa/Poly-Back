@@ -1,30 +1,58 @@
-import { Market, BatchBacktestResult } from "../../types";
+import { useState } from "react";
+import type { Market, BatchBacktestResult, ExecutionMode, StrategyParams } from "../../types";
 import StrategyControls from "./StrategyControls";
+import BulkLoadModal from "./BulkLoadModal";
 
 interface BacktestPanelProps {
+  markets: Market[];
   queuedMarkets: Market[];
   activeStrategy: string;
   backtestResults: BatchBacktestResult | null;
   running: boolean;
   onRemoveFromQueue: (marketId: string) => void;
+  onBulkAdd: (markets: Market[]) => void;
   onRunBacktest: () => void;
   onStrategyChange: (strategy: string) => void;
+  strategyParams: StrategyParams;
+  onParamsChange: (p: StrategyParams) => void;
+  executionMode: ExecutionMode;
+  onExecutionModeChange: (mode: ExecutionMode) => void;
 }
 
 export default function BacktestPanel({
+  markets,
   queuedMarkets,
   activeStrategy,
   backtestResults,
   running,
   onRemoveFromQueue,
+  onBulkAdd,
   onRunBacktest,
   onStrategyChange,
+  strategyParams,
+  onParamsChange,
+  executionMode,
+  onExecutionModeChange,
 }: BacktestPanelProps) {
+  const [showBulk, setShowBulk] = useState(false);
+
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
+      {showBulk && (
+        <BulkLoadModal
+          markets={markets}
+          onAdd={m => { onBulkAdd(m); }}
+          onClose={() => setShowBulk(false)}
+        />
+      )}
+
       <StrategyControls
         activeStrategy={activeStrategy}
         onStrategyChange={onStrategyChange}
+        strategyParams={strategyParams}
+        onParamsChange={onParamsChange}
+        executionMode={executionMode}
+        onExecutionModeChange={onExecutionModeChange}
       />
 
       <div className="queue-bar">
@@ -45,6 +73,13 @@ export default function BacktestPanel({
             ))
           )}
         </div>
+        <button
+          className="queue-run"
+          style={{ background: "var(--surface2)", border: "1px solid var(--border2)", color: "var(--muted2)", marginRight: 4 }}
+          onClick={() => setShowBulk(true)}
+        >
+          Bulk Load
+        </button>
         <button
           className="queue-run"
           disabled={!queuedMarkets.length || running}

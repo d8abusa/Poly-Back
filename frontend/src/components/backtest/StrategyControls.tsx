@@ -1,50 +1,177 @@
+import { useState, useEffect } from "react";
+import ExecutionModeToggle from "../execution/ExecutionModeToggle";
+import ParamSliders from "./ParamSliders";
+import type { ExecutionMode, StrategyMeta, StrategyParams } from "../../types";
+
 interface StrategyControlsProps {
   activeStrategy: string;
   onStrategyChange: (strategy: string) => void;
+  strategyParams: StrategyParams;
+  onParamsChange: (p: StrategyParams) => void;
+  executionMode: ExecutionMode;
+  onExecutionModeChange: (mode: ExecutionMode) => void;
 }
 
-const STRATEGIES = [
-  { id: "threshold", label: "Threshold", desc: "Buy low, sell high on probability levels" },
-  { id: "momentum", label: "Momentum", desc: "Follow rising probability trends" },
-] as const;
+// Strategies the backtest engine actually executes
+const LIVE_STRATEGIES = new Set(["threshold", "momentum", "zscore_reversion", "kelly", "market_making"]);
+
+interface StrategyFull extends StrategyMeta {
+  tagline?: string;
+  category?: string;
+  risk?: string;
+  complexity?: string;
+  color?: string;
+  status?: "live" | "soon";
+}
+
+// Fallback if API is unreachable
+const FALLBACK: StrategyFull[] = [
+  { id: "threshold", label: "Threshold",       tagline: "Buy low, sell high on probability levels", category: "Mean Reversion",  risk: "Low",    complexity: "Beginner",     color: "#00d4a8" },
+  { id: "momentum",  label: "Momentum Chaser", tagline: "Follow trend breakouts with trailing stop", category: "Trend Following", risk: "High",   complexity: "Beginner",     color: "#f59e0b" },
+];
 
 export default function StrategyControls({
   activeStrategy,
   onStrategyChange,
+  strategyParams,
+  onParamsChange,
+  executionMode,
+  onExecutionModeChange,
 }: StrategyControlsProps) {
+  const [strategies, setStrategies] = useState<StrategyFull[]>(FALLBACK);
+
+  useEffect(() => {
+    fetch("/api/strategies")
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data?.strategies?.length) return;
+        // Map backend shape → StrategyFull (backend uses `name` not `label`)
+        const mapped: StrategyFull[] = data.strategies.map((s: any) => ({
+          id:         s.id,
+          label:      s.name ?? s.label ?? s.id,
+          tagline:    s.tagline,
+          category:   s.category,
+          risk:       s.risk,
+          complexity: s.complexity,
+          color:      s.color,
+          status:     s.status ?? "live",
+        }));
+        setStrategies(mapped);
+        // If current selection no longer exists, default to first live one
+        if (!mapped.find(s => s.id === activeStrategy)) {
+          const first = mapped.find(s => LIVE_STRATEGIES.has(s.id));
+          if (first) onStrategyChange(first.id);
+        }
+      })
+      .catch(() => {}); // keep fallback
+  }, []);
+
+  const RISK_COLOR: Record<string, string> = {
+    "Low":          "#22c55e",
+    "Low-Medium":   "#84cc16",
+    "Medium":       "#f59e0b",
+    "High":         "#ef4444",
+    "Variable":     "#7b61ff",
+  };
+
   return (
     <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
       <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
         Strategy
       </div>
-      <div style={{ display: "flex", gap: 6 }}>
-        {STRATEGIES.map(s => {
-          const active = activeStrategy === s.id;
+
+      {/* ── Carousel ── */}
+      <div className="strategy-carousel" style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+        {strategies.map(s => {
+          const active   = activeStrategy === s.id;
+          const isLive   = s.status ? s.status === "live" : LIVE_STRATEGIES.has(s.id);
+          const accentColor = s.color ?? "var(--accent)";
+
           return (
             <button
               key={s.id}
-              onClick={() => onStrategyChange(s.id)}
-              title={s.desc}
+              onClick={() => isLive && onStrategyChange(s.id)}
+              title={s.tagline}
               style={{
-                flex: 1,
-                padding: "6px 10px",
-                borderRadius: 5,
-                border: `1px solid ${active ? "rgba(0,212,168,0.4)" : "var(--border2)"}`,
-                background: active ? "rgba(0,212,168,0.08)" : "var(--surface2)",
-                color: active ? "var(--accent)" : "var(--muted2)",
+                flexShrink: 0,
+                width: 148,
+                padding: "9px 11px",
+                borderRadius: 6,
+                border: `1px solid ${active ? accentColor + "66" : "var(--border2)"}`,
+                background: active ? accentColor + "12" : "var(--surface2)",
+                color: active ? accentColor : "var(--muted2)",
                 fontFamily: "IBM Plex Mono, monospace",
-                fontSize: 10,
-                fontWeight: active ? 600 : 400,
-                cursor: "pointer",
+                cursor: isLive ? "pointer" : "default",
+                textAlign: "left",
+                opacity: isLive ? 1 : 0.5,
                 transition: "all 0.12s",
-                textAlign: "center",
+                position: "relative",
               }}
             >
-              {s.label}
+              {/* Name */}
+              <div style={{ fontSize: 11, fontWeight: active ? 700 : 500, marginBottom: 3, lineHeight: 1.2 }}>
+                {s.label}
+              </div>
+
+              {/* Tagline */}
+              {s.tagline && (
+                <div style={{
+                  fontSize: 9, color: active ? accentColor + "bb" : "var(--muted)",
+                  lineHeight: 1.4, marginBottom: 6,
+                  overflow: "hidden", display: "-webkit-box",
+                  WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
+                }}>
+                  {s.tagline}
+                </div>
+              )}
+
+              {/* Meta row */}
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                {s.category && (
+                  <span style={{
+                    fontSize: 8, padding: "1px 5px", borderRadius: 2,
+                    border: `1px solid ${accentColor}33`,
+                    color: active ? accentColor : "var(--muted)",
+                  }}>
+                    {s.category}
+                  </span>
+                )}
+                {s.risk && (
+                  <span style={{
+                    fontSize: 8, color: RISK_COLOR[s.risk] ?? "var(--muted)",
+                  }}>
+                    {s.risk} risk
+                  </span>
+                )}
+              </div>
+
+              {/* Soon badge */}
+              {!isLive && (
+                <span style={{
+                  position: "absolute", top: 6, right: 7,
+                  fontSize: 7, letterSpacing: "0.1em",
+                  color: "var(--muted)", border: "1px solid var(--border2)",
+                  padding: "1px 4px", borderRadius: 2,
+                }}>
+                  SOON
+                </span>
+              )}
+
+              {/* Active indicator dot */}
+              {active && (
+                <span style={{
+                  position: "absolute", top: 7, right: 8,
+                  width: 5, height: 5, borderRadius: "50%",
+                  background: accentColor,
+                }} />
+              )}
             </button>
           );
         })}
       </div>
+
+      <ParamSliders strategy={activeStrategy} params={strategyParams} onChange={onParamsChange} />
+      <ExecutionModeToggle mode={executionMode} onChange={onExecutionModeChange} />
     </div>
   );
 }

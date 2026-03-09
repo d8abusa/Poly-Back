@@ -1,4 +1,4 @@
-import { Market, HistoryPoint } from "../../types";
+import type { Market, HistoryPoint } from "../../types";
 import { probColor, catColor, fmtVol } from "../../utils";
 import PriceChart from "../charts/PriceChart";
 

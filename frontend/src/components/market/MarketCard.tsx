@@ -1,4 +1,4 @@
-import { Market } from "../../types";
+import type { Market } from "../../types";
 import { probColor, catColor, fmtVol } from "../../utils";
 
 interface MarketCardProps {

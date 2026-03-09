@@ -1,13 +1,20 @@
 import { useState, useEffect } from "react";
 
 import { globalCss } from "../styles";
-import { Market, HistoryPoint, BatchBacktestResult, HistoryRun } from "../types";
+import type { Market, HistoryPoint, BatchBacktestResult, HistoryRun, ExecutionMode, StrategyParams } from "../types";
+import { DEFAULT_PARAMS } from "../components/backtest/ParamSliders";
 
 import MarketSearch from "../components/market/MarketSearch";
 import MarketDetail from "../components/market/MarketDetail";
 import BacktestPanel from "../components/backtest/BacktestPanel";
 import BacktestResults from "../components/backtest/BacktestResults";
 import HistoryDrawer from "../components/shared/HistoryDrawer";
+import SignalQueue from "../components/execution/SignalQueue";
+import ExecutionLog from "../components/execution/ExecutionLog";
+import PositionTracker from "../components/positions/PositionTracker";
+import HistoryView from "../components/history/HistoryView";
+import LiveFeed from "../components/feed/LiveFeed";
+import AuthStatus from "../components/shared/AuthStatus";
 
 // ── BacktestConsole — owns ALL shared state ────────────────────────────────────
 
@@ -27,11 +34,16 @@ export default function BacktestConsole() {
 
   // ── Strategy + results ───────────────────────────────────────────────────────
   const [activeStrategy, setActiveStrategy] = useState("threshold");
+  const [strategyParams, setStrategyParams] = useState<StrategyParams>(DEFAULT_PARAMS);
   const [backtestResults, setBacktestResults] = useState<BatchBacktestResult | null>(null);
   const [running, setRunning] = useState(false);
 
   // ── Run history ──────────────────────────────────────────────────────────────
   const [historyRuns, setHistoryRuns] = useState<HistoryRun[]>([]);
+
+  // ── Execution mode + view ─────────────────────────────────────────────────────
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("confirm");
+  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "feed">("backtest");
 
   // ── Toast ────────────────────────────────────────────────────────────────────
   const [toastMsg, setToastMsg] = useState("");
@@ -112,10 +124,10 @@ export default function BacktestConsole() {
             token_id: m.token_id,
           })),
           strategy: activeStrategy,
-          entry_threshold: 0.30,
-          exit_threshold: 0.70,
+          ...strategyParams,
           initial_capital: 1000,
           interval: "max",
+          execution_mode: executionMode,
         }),
       });
 
@@ -180,51 +192,92 @@ export default function BacktestConsole() {
             {queuedMarkets.length > 0 && (
               <span className="sel-count">⚡ {queuedMarkets.length} queued</span>
             )}
+            {/* View nav */}
+            {(["backtest", "signals", "positions", "history", "feed"] as const).map(v => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                style={{
+                  padding: "3px 10px", borderRadius: 4, cursor: "pointer",
+                  fontFamily: "IBM Plex Mono, monospace", fontSize: 10,
+                  border: `1px solid ${view === v ? "rgba(0,212,168,0.35)" : "var(--border2)"}`,
+                  background: view === v ? "rgba(0,212,168,0.08)" : "var(--surface2)",
+                  color: view === v ? "var(--accent)" : "var(--muted2)",
+                  fontWeight: view === v ? 700 : 400,
+                }}
+              >
+                {v === "backtest" ? "Backtest" : v === "signals" ? "Signals" : v === "positions" ? "Positions" : v === "history" ? "History" : "Feed"}
+              </button>
+            ))}
             <HistoryDrawer
               historyRuns={historyRuns}
               onLoadRun={handleLoadRun}
               onDeleteRun={handleDeleteRun}
             />
+            <AuthStatus />
           </div>
         </div>
 
         {/* Main layout */}
-        <div className="layout">
-
-          {/* Left: search + market list */}
-          <MarketSearch
-            markets={markets}
-            loading={loading}
-            error={error}
-            selectedMarket={selectedMarket}
-            queuedMarkets={queuedMarkets}
-            onSelectMarket={handleSelectMarket}
-            onToggleQueue={handleToggleQueue}
-          />
-
-          {/* Right: detail + backtest */}
-          <div className="detail-panel">
-            <MarketDetail
+        {view === "backtest" ? (
+          <div className="layout">
+            {/* Left: search + market list */}
+            <MarketSearch
+              markets={markets}
+              loading={loading}
+              error={error}
               selectedMarket={selectedMarket}
-              priceHistory={priceHistory}
-              historyLoading={historyLoading}
-            />
-
-            <BacktestPanel
               queuedMarkets={queuedMarkets}
-              activeStrategy={activeStrategy}
-              backtestResults={backtestResults}
-              running={running}
-              onRemoveFromQueue={handleRemoveFromQueue}
-              onRunBacktest={handleRunBacktest}
-              onStrategyChange={setActiveStrategy}
+              onSelectMarket={handleSelectMarket}
+              onToggleQueue={handleToggleQueue}
             />
 
-            {backtestResults && !running && (
-              <BacktestResults results={backtestResults} />
-            )}
+            {/* Right: detail + backtest */}
+            <div className="detail-panel">
+              <MarketDetail
+                selectedMarket={selectedMarket}
+                priceHistory={priceHistory}
+                historyLoading={historyLoading}
+              />
+
+              <BacktestPanel
+                markets={markets}
+                queuedMarkets={queuedMarkets}
+                activeStrategy={activeStrategy}
+                backtestResults={backtestResults}
+                running={running}
+                onRemoveFromQueue={handleRemoveFromQueue}
+                onBulkAdd={markets => setQueuedMarkets(q => {
+                  const existing = new Set(q.map(m => m.id));
+                  return [...q, ...markets.filter(m => !existing.has(m.id))];
+                })}
+                onRunBacktest={handleRunBacktest}
+                onStrategyChange={setActiveStrategy}
+                strategyParams={strategyParams}
+                onParamsChange={setStrategyParams}
+                executionMode={executionMode}
+                onExecutionModeChange={setExecutionMode}
+              />
+
+              {backtestResults && !running && (
+                <BacktestResults results={backtestResults} />
+              )}
+            </div>
           </div>
-        </div>
+        ) : view === "signals" ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <SignalQueue executionMode={executionMode} />
+            <div style={{ borderLeft: "1px solid var(--border)", overflow: "auto", padding: 14 }}>
+              <ExecutionLog />
+            </div>
+          </div>
+        ) : view === "positions" ? (
+          <PositionTracker />
+        ) : view === "history" ? (
+          <HistoryView />
+        ) : (
+          <LiveFeed markets={markets} />
+        )}
 
         {/* Toast */}
         {toastMsg && (

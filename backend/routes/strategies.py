@@ -4,16 +4,15 @@ from ..strategies import ALL_STRATEGIES, STRATEGY_MAP
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
-_HIDDEN: set[str] = set()  # reserve for future legacy aliases
+_HIDDEN: set[str] = set()
 
 
 @router.get("")
 async def list_strategies():
     return {
         "strategies": [
-            s.model_dump()
-            for s in ALL_STRATEGIES
-            if s.id not in _HIDDEN
+            s for s in ALL_STRATEGIES
+            if s["id"] not in _HIDDEN
         ]
     }
 
@@ -23,4 +22,4 @@ async def get_strategy(strategy_id: str):
     s = STRATEGY_MAP.get(strategy_id)
     if not s:
         raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' not found")
-    return s.model_dump()
+    return s

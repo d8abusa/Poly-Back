@@ -145,6 +145,8 @@ export const globalCss = `
   .stt-key { color:var(--muted2); }
   .stt-val { color:var(--text); font-weight:600; }
 
+  .strategy-carousel::-webkit-scrollbar { display:none; }
+  .strategy-carousel { scrollbar-width:none; }
   @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
   .fade-in { animation:fadeIn 0.2s ease; }
   @keyframes spin { to { transform: rotate(360deg); } }

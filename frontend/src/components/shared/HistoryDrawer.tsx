@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { HistoryRun, BatchBacktestResult } from "../../types";
+import type { HistoryRun, BatchBacktestResult } from "../../types";
 import RunCard from "./RunCard";
 
 interface HistoryDrawerProps {
@@ -34,7 +34,7 @@ export default function HistoryDrawer({
           fontFamily: "IBM Plex Mono, monospace", cursor: "pointer", position: "relative",
         }}
       >
-        History
+        Runs
         {historyRuns.length > 0 && (
           <span style={{
             position: "absolute", top: -4, right: -4, width: 14, height: 14,
@@ -48,11 +48,20 @@ export default function HistoryDrawer({
 
       {/* Drawer panel */}
       {open && (
+        <>
+          {/* Backdrop */}
+          <div
+            onClick={() => setOpen(false)}
+            style={{
+              position: "fixed", inset: 0, zIndex: 49,
+              background: "rgba(0,0,0,0.45)",
+            }}
+          />
         <div style={{
-          position: "fixed", top: 52, right: 0, bottom: 0, width: 300,
-          background: "var(--bg)", borderLeft: "1px solid var(--border)",
+          position: "fixed", top: 52, right: 0, bottom: 0, width: 320,
+          background: "var(--surface)", borderLeft: "1px solid var(--border2)",
           display: "flex", flexDirection: "column", zIndex: 50,
-          boxShadow: "-8px 0 24px rgba(0,0,0,0.4)",
+          boxShadow: "-12px 0 40px rgba(0,0,0,0.6)",
         }}>
           <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 13 }}>
@@ -82,8 +91,16 @@ export default function HistoryDrawer({
 
           <div style={{ flex: 1, overflowY: "auto" }}>
             {filtered.length === 0 ? (
-              <div style={{ padding: "30px 14px", textAlign: "center", color: "var(--muted)", fontSize: 11 }}>
-                {historyRuns.length === 0 ? "No runs yet — run a backtest to see history" : "No matching runs"}
+              <div style={{ padding: "40px 20px", textAlign: "center" }}>
+                <div style={{ fontSize: 28, marginBottom: 12, opacity: 0.2 }}>⏱</div>
+                <div style={{ fontSize: 12, color: "var(--muted2)", marginBottom: 6 }}>
+                  {historyRuns.length === 0 ? "No runs yet" : "No matching runs"}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.6 }}>
+                  {historyRuns.length === 0
+                    ? "Queue some markets on the Backtest tab and hit ▶ Run to record a run here."
+                    : "Try a different filter."}
+                </div>
               </div>
             ) : (
               filtered.map(run => (
@@ -97,6 +114,7 @@ export default function HistoryDrawer({
             )}
           </div>
         </div>
+        </>
       )}
     </>
   );

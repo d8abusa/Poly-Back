@@ -1,4 +1,4 @@
-import { TradeEntry } from "../../types";
+import type { TradeEntry } from "../../types";
 
 interface PnLDistributionProps {
   trades: TradeEntry[];

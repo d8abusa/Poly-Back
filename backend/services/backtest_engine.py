@@ -12,6 +12,7 @@ This mirrors how market makers and active traders operate on Polymarket.
 import logging
 import numpy as np
 import pandas as pd
+from collections import deque
 from datetime import datetime, timezone
 from typing import List
 
@@ -74,6 +75,21 @@ class PredictionMarketBacktester:
         self.trades: list = []
         self.equity_curve: list = []
 
+        # ── Per-strategy state ─────────────────────────────────────────────
+
+        # Z-Score Reversion: rolling window of probabilities
+        self._zscore_window: deque = deque(maxlen=request.zscore_window if hasattr(request, "zscore_window") else 20)
+
+        # Kelly: tracks consecutive wins/losses for fractional sizing
+        self._kelly_last_pnls: deque = deque(maxlen=20)
+
+        # Market Making: tracks our two open legs
+        # Each leg: {"side": "YES"|"NO", "entry": float, "shares": float}
+        self._mm_bid_leg: dict | None = None   # long YES at bid
+        self._mm_ask_leg: dict | None = None   # short via cash reserve at ask
+        self._mm_spread_target: float = getattr(request, "mm_spread", 0.04)
+        self._mm_max_inventory: float = 0.30   # max prob-units of inventory
+
     # ── Public entry point ───────────────────────────────────────────────────
 
     def run(self) -> BacktestResult:
@@ -95,11 +111,23 @@ class PredictionMarketBacktester:
                 self._threshold(prob, date)
             elif self.req.strategy == "momentum":
                 self._momentum(prob, date)
+            elif self.req.strategy == "zscore_reversion":
+                self._zscore_reversion(prob, date)
+            elif self.req.strategy == "kelly":
+                self._kelly(prob, date)
+            elif self.req.strategy == "market_making":
+                self._market_making(prob, date)
 
         # Force-close any open position at last price
         if self.position > 0:
             last = self.history[-1]
             self._sell(float(last["p"]), self._ts_to_date(int(last["t"])), forced=True)
+
+        # Market making: close any open bid leg
+        if self._mm_bid_leg is not None and self.position > 0:
+            last = self.history[-1]
+            self._sell(float(last["p"]), self._ts_to_date(int(last["t"])), forced=True)
+            self._mm_bid_leg = None
 
         equity_series = pd.Series([pt["value"] for pt in self.equity_curve])
         daily_ret = equity_series.pct_change().dropna()
@@ -145,34 +173,222 @@ class PredictionMarketBacktester:
         elif not rising and self.position > 0:
             self._sell(prob, date)
 
+    def _zscore_reversion(self, prob: float, date: str):
+        """
+        Z-Score Mean Reversion.
+
+        Theory: prediction market probabilities revert to a rolling mean when
+        temporarily dislocated by noise, thin liquidity, or overreaction to news.
+
+        Logic:
+          - Maintain a rolling window of recent probabilities (default 20 ticks).
+          - Compute z-score = (prob - mean) / std.
+          - BUY  when z-score < -entry_z  (prob unusually depressed → expect reversion up).
+          - SELL when z-score >  exit_z   (prob reverted to or above mean).
+          - STOP if z-score < -stop_z     (dislocation deepening → cut loss).
+
+        Parameters on BacktestRequest (with defaults):
+          zscore_window   int   20     rolling window length
+          zscore_entry    float 1.5    z-score threshold to enter long
+          zscore_exit     float 0.0    z-score threshold to exit (mean reversion)
+          zscore_stop     float 3.0    z-score floor for stop-loss
+        """
+        self._zscore_window.append(prob)
+
+        # Need a full window before trading
+        if len(self._zscore_window) < self._zscore_window.maxlen:
+            return
+
+        arr  = np.array(self._zscore_window)
+        mean = arr.mean()
+        std  = arr.std()
+
+        if std < 1e-6:
+            # Flat market — no edge, stay out
+            return
+
+        z = (prob - mean) / std
+
+        entry_z = getattr(self.req, "zscore_entry", 1.5)
+        exit_z  = getattr(self.req, "zscore_exit",  0.0)
+        stop_z  = getattr(self.req, "zscore_stop",  3.0)
+
+        stop = self.req.stop_loss
+
+        if self.position == 0 and self.cash > 0:
+            if z < -entry_z:
+                # Probability is significantly below its rolling mean — buy the dip
+                self._buy(prob, date, note=f"z={z:.2f}")
+        elif self.position > 0:
+            if z >= exit_z:
+                # Reversion achieved — take profit
+                self._sell(prob, date, note=f"z={z:.2f} reversion")
+            elif z < -stop_z:
+                # Dislocation deepening past stop — cut loss
+                self._sell(prob, date, forced=True, note=f"z={z:.2f} stop")
+            elif stop is not None and prob <= stop:
+                self._sell(prob, date, forced=True, note="prob stop-loss")
+
+    def _kelly(self, prob: float, date: str):
+        """
+        Kelly Criterion Sizing.
+
+        Theory: bet the fraction of capital that maximises expected log-wealth,
+        based on an estimated edge derived from the entry/exit thresholds.
+
+        f* = (bp - q) / b
+          where b = (exit_threshold / entry_prob) - 1  (net odds if prob reaches target)
+                p = estimated win probability (we use the implied edge from thresholds)
+                q = 1 - p
+
+        We use a *fractional Kelly* (half-Kelly by default) to reduce variance.
+
+        Entry/exit still use threshold logic so it composites cleanly with
+        the existing parameter set. The difference from plain threshold:
+        position size is dynamic rather than always all-in.
+
+        Parameters on BacktestRequest (with defaults):
+          kelly_fraction  float  0.5   fraction of full Kelly to bet (0.5 = half-Kelly)
+          entry_threshold float  0.30  same as threshold strategy
+          exit_threshold  float  0.70  same as threshold strategy
+        """
+        kelly_fraction = getattr(self.req, "kelly_fraction", 0.5)
+        stop = self.req.stop_loss
+
+        if self.position == 0 and self.cash > 0:
+            if prob <= self.req.entry_threshold:
+                # Estimate edge: target outcome is prob reaching exit_threshold
+                b = (self.req.exit_threshold / prob) - 1.0   # net odds per share
+                # Win probability: use recent win rate if available, else 0.55
+                p_win = self._recent_win_rate()
+                q_win = 1.0 - p_win
+                full_kelly = (b * p_win - q_win) / b if b > 0 else 0.0
+                fraction   = max(0.0, min(1.0, full_kelly * kelly_fraction))
+
+                if fraction < 0.01:
+                    # No edge — skip
+                    return
+
+                capital_to_deploy = self.cash * fraction
+                shares = capital_to_deploy / prob
+                self._buy_partial(prob, date, shares, capital_to_deploy,
+                                  note=f"kelly_f={fraction:.2f}")
+
+        elif self.position > 0:
+            if prob >= self.req.exit_threshold:
+                self._sell(prob, date, note="kelly exit")
+            elif stop is not None and prob <= stop:
+                self._sell(prob, date, forced=True, note="kelly stop")
+
+    def _market_making(self, prob: float, date: str):
+        """
+        Simplified Market Making (inventory management model).
+
+        Theory: post a bid below and an ask above the mid-price. Collect the
+        spread when both sides fill. Manage inventory to avoid directional risk.
+
+        Simplified for backtesting (no order book):
+          - Each tick, decide whether to open a long (bid) position if prob is
+            sufficiently below our estimated fair value (rolling mean).
+          - Exit the long when prob rises by at least the spread target.
+          - Hard inventory cap prevents over-exposure.
+          - Skew: if already long, require a wider dip before adding more.
+
+        Parameters on BacktestRequest (with defaults):
+          mm_spread       float  0.04   minimum spread to collect (entry discount)
+          entry_threshold / exit_threshold used as fair-value anchors
+        """
+        # Rolling fair-value estimate (20-tick EMA proxy)
+        self._zscore_window.append(prob)   # reuse window for fair-value
+        if len(self._zscore_window) < 5:
+            return
+
+        arr       = np.array(self._zscore_window)
+        fair      = float(arr[-5:].mean())    # short-term mean as fair value
+        spread    = self._mm_spread_target
+        bid_price = fair - spread / 2
+        ask_price = fair + spread / 2
+        stop      = self.req.stop_loss
+
+        inventory_value = self.position * prob   # current long exposure in $
+
+        if self.position == 0 and self.cash > 0:
+            if prob <= bid_price:
+                # Price crossed our bid — open long leg (simulate bid fill)
+                # Size: at most mm_max_inventory × capital
+                max_deploy = self.cash * self._mm_max_inventory
+                shares = max_deploy / prob
+                self._buy_partial(prob, date, shares, max_deploy,
+                                  note=f"mm_bid fair={fair:.3f}")
+                self._mm_bid_leg = {"entry": prob, "shares": shares}
+
+        elif self.position > 0 and self._mm_bid_leg is not None:
+            entry = self._mm_bid_leg["entry"]
+            # Exit when price has risen by at least the spread (collected full spread)
+            if prob >= entry + spread:
+                self._sell(prob, date, note=f"mm_ask collected spread={prob-entry:.3f}")
+                self._mm_bid_leg = None
+            # Stop: price moved against us by more than 2× the spread
+            elif prob <= entry - spread * 2:
+                self._sell(prob, date, forced=True, note="mm stop")
+                self._mm_bid_leg = None
+            elif stop is not None and prob <= stop:
+                self._sell(prob, date, forced=True, note="prob stop-loss")
+                self._mm_bid_leg = None
+
     # ── Trade execution ───────────────────────────────────────────────────────
 
-    def _buy(self, prob: float, date: str):
+    def _buy(self, prob: float, date: str, note: str = ""):
+        """Deploy all available cash into YES shares."""
         shares = self.cash / prob
         self.avg_entry = prob
-        self.position = shares
-        self.cash = 0.0
+        self.position  = shares
+        self.cash      = 0.0
         self.trades.append({
-            "date": date,
-            "action": "BUY",
-            "price": round(prob, 4),
+            "date":   date,
+            "action": f"BUY{(' · ' + note) if note else ''}",
+            "price":  round(prob, 4),
             "shares": round(shares, 4),
-            "value": round(shares * prob, 4),
-            "pnl": None,
+            "value":  round(shares * prob, 4),
+            "pnl":    None,
         })
 
-    def _sell(self, prob: float, date: str, forced: bool = False):
+    def _buy_partial(self, prob: float, date: str, shares: float, cost: float, note: str = ""):
+        """Deploy a specific amount of cash — used by Kelly and Market Making."""
+        if cost > self.cash:
+            cost   = self.cash
+            shares = cost / prob
+        self.avg_entry = (
+            (self.avg_entry * self.position + prob * shares)
+            / (self.position + shares)
+            if self.position > 0 else prob
+        )
+        self.position += shares
+        self.cash     -= cost
+        self.trades.append({
+            "date":   date,
+            "action": f"BUY{(' · ' + note) if note else ''}",
+            "price":  round(prob, 4),
+            "shares": round(shares, 4),
+            "value":  round(cost, 4),
+            "pnl":    None,
+        })
+
+    def _sell(self, prob: float, date: str, forced: bool = False, note: str = ""):
         pnl = (prob - self.avg_entry) * self.position
         self.cash = self.position * prob
+        action = "SELL (forced close)" if forced else "SELL"
+        if note:
+            action += f" · {note}"
         self.trades.append({
-            "date": date,
-            "action": "SELL" if not forced else "SELL (forced close)",
-            "price": round(prob, 4),
+            "date":   date,
+            "action": action,
+            "price":  round(prob, 4),
             "shares": round(self.position, 4),
-            "value": round(self.position * prob, 4),
-            "pnl": round(pnl, 4),
+            "value":  round(self.position * prob, 4),
+            "pnl":    round(pnl, 4),
         })
-        self.position = 0.0
+        self.position  = 0.0
         self.avg_entry = 0.0
 
     # ── Metrics ───────────────────────────────────────────────────────────────
@@ -195,6 +411,14 @@ class PredictionMarketBacktester:
         if not sells:
             return 0.0
         return sum(1 for t in sells if t["pnl"] > 0) / len(sells)
+
+    def _recent_win_rate(self, n: int = 10) -> float:
+        """Win rate over last n closed trades — used by Kelly to estimate p_win."""
+        sells = [t for t in self.trades if t["action"].startswith("SELL") and t.get("pnl") is not None]
+        if not sells:
+            return 0.55   # prior: slight edge assumed
+        recent = sells[-n:]
+        return sum(1 for t in recent if t["pnl"] > 0) / len(recent)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

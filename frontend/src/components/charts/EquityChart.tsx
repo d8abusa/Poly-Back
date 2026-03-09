@@ -1,4 +1,4 @@
-import { EquityPoint } from "../../types";
+import type { EquityPoint } from "../../types";
 
 interface EquityChartProps {
   data: EquityPoint[] | number[];

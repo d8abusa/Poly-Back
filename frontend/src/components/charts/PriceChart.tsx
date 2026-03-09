@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Market, HistoryPoint } from "../../types";
+import type { Market, HistoryPoint } from "../../types";
 import { genCurve } from "../../utils";
 
 interface TooltipState {

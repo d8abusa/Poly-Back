@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Market } from "../../types";
+import type { Market } from "../../types";
 import MarketCard from "./MarketCard";
 
 interface MarketSearchProps {
