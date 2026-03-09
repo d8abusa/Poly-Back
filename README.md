@@ -1,6 +1,9 @@
 # PolyBack — Prediction Market Backtester & Live Feed
 
 A full-stack research platform for Polymarket — backtest trading strategies against historical price data, watch live order books, and manage an execution pipeline from signal to position.
+<img width="1535" height="880" alt="image" src="https://github.com/user-attachments/assets/9ab1f8f2-fb43-44e5-9c0c-57da6d17ba25" />
+
+
 
 ---
 
