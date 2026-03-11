@@ -124,6 +124,192 @@ function riskColor(r: string): string {
 type Tab = "overview" | "formula" | "parameters" | "performance" | "risks";
 const TABS: Tab[] = ["overview", "formula", "parameters", "performance", "risks"];
 
+const PRESET_COLORS = ["#00d4a8", "#7b61ff", "#f59e0b", "#22c55e", "#ef4444", "#f97316", "#3b82f6", "#ec4899"];
+const CATEGORIES    = ["Mean Reversion", "Trend Following", "Statistical Arbitrage", "Position Sizing", "Market Making", "Event-Driven", "Other"];
+const RISK_LEVELS   = ["Low", "Low-Medium", "Medium", "Medium-High", "High", "Variable"];
+const COMPLEXITIES  = ["Simple", "Moderate", "Advanced", "Expert"];
+
+// ── Custom Strategy Modal ─────────────────────────────────────────────────────
+
+interface CreateModalProps {
+  onSave: (s: Strategy) => void;
+  onClose: () => void;
+}
+
+function CreateModal({ onSave, onClose }: CreateModalProps) {
+  const [name,        setName]        = useState("");
+  const [tagline,     setTagline]     = useState("");
+  const [category,    setCategory]    = useState(CATEGORIES[0]);
+  const [risk,        setRisk]        = useState(RISK_LEVELS[2]);
+  const [complexity,  setComplexity]  = useState(COMPLEXITIES[0]);
+  const [color,       setColor]       = useState(PRESET_COLORS[0]);
+  const [description, setDescription] = useState("");
+  const [formula,     setFormula]     = useState("");
+  const [entryLogic,  setEntryLogic]  = useState("");
+  const [exitLogic,   setExitLogic]   = useState("");
+  const [edge,        setEdge]        = useState("");
+
+  const canSave = name.trim().length > 0;
+
+  const handleSave = () => {
+    if (!canSave) return;
+    const id = `custom_${Date.now()}`;
+    const strategy: Strategy = {
+      id,
+      name:        name.trim(),
+      tagline:     tagline.trim() || "Custom strategy",
+      category,
+      risk,
+      complexity,
+      color,
+      description: description.trim() || "No description provided.",
+      formula:     formula.trim() || "—",
+      logic: {
+        entry: entryLogic.trim() || "—",
+        exit:  exitLogic.trim()  || "—",
+        size:  "User-defined",
+      },
+      edge:        edge.trim() || "User-defined edge hypothesis.",
+      risks:       ["Custom strategy — backtest thoroughly before deploying capital"],
+      performance: { win_rate: 0, avg_return: 0, sharpe: 0, max_dd: 0, trades: 0 },
+      synthetic_curve: undefined,
+      params:      [],
+    };
+    onSave(strategy);
+  };
+
+  const input: React.CSSProperties = {
+    width: "100%", background: "#0a0c0f", border: "1px solid #252d3d",
+    borderRadius: 5, padding: "7px 10px", color: "#e8eaf0",
+    fontFamily: "IBM Plex Mono, monospace", fontSize: 11, outline: "none",
+    boxSizing: "border-box",
+  };
+  const label: React.CSSProperties = {
+    fontSize: 9, color: "#606880", textTransform: "uppercase",
+    letterSpacing: "0.1em", marginBottom: 5, display: "block",
+  };
+  const select: React.CSSProperties = { ...input, cursor: "pointer" };
+  const field = (lbl: string, el: React.ReactNode) => (
+    <div style={{ marginBottom: 14 }}>
+      <span style={label}>{lbl}</span>
+      {el}
+    </div>
+  );
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: "#111318", border: "1px solid #252d3d", borderRadius: 10, padding: 24, width: 520, maxHeight: "85vh", overflowY: "auto", fontFamily: "IBM Plex Mono, monospace" }}
+      >
+        <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 16, color: color, marginBottom: 4 }}>
+          + Custom Strategy
+        </div>
+        <div style={{ fontSize: 10, color: "#606880", marginBottom: 20 }}>
+          Saved locally — run a backtest to evaluate performance
+        </div>
+
+        {/* Name + tagline */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {field("Name *", <input style={input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Momentum Fade" />)}
+          {field("Tagline", <input style={input} value={tagline} onChange={e => setTagline(e.target.value)} placeholder="One-line description" />)}
+        </div>
+
+        {/* Category / Risk / Complexity */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          {field("Category",
+            <select style={select} value={category} onChange={e => setCategory(e.target.value)}>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+          {field("Risk Level",
+            <select style={select} value={risk} onChange={e => setRisk(e.target.value)}>
+              {RISK_LEVELS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          )}
+          {field("Complexity",
+            <select style={select} value={complexity} onChange={e => setComplexity(e.target.value)}>
+              {COMPLEXITIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+        </div>
+
+        {/* Color picker */}
+        {field("Colour",
+          <div style={{ display: "flex", gap: 8 }}>
+            {PRESET_COLORS.map(c => (
+              <div
+                key={c}
+                onClick={() => setColor(c)}
+                style={{
+                  width: 22, height: 22, borderRadius: "50%", background: c, cursor: "pointer",
+                  border: color === c ? `2px solid #fff` : "2px solid transparent",
+                  boxShadow: color === c ? `0 0 0 1px ${c}` : "none",
+                  transition: "all 0.12s",
+                }}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Description */}
+        {field("Description",
+          <textarea
+            style={{ ...input, resize: "vertical", minHeight: 64 }}
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="How does this strategy work?"
+          />
+        )}
+
+        {/* Formula */}
+        {field("Formula",
+          <input style={input} value={formula} onChange={e => setFormula(e.target.value)} placeholder="e.g. p < T_entry → Buy; p > T_exit → Sell" />
+        )}
+
+        {/* Entry / Exit */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {field("Entry Condition",
+            <textarea style={{ ...input, resize: "vertical", minHeight: 52 }} value={entryLogic} onChange={e => setEntryLogic(e.target.value)} placeholder="When to enter" />
+          )}
+          {field("Exit Condition",
+            <textarea style={{ ...input, resize: "vertical", minHeight: 52 }} value={exitLogic} onChange={e => setExitLogic(e.target.value)} placeholder="When to exit" />
+          )}
+        </div>
+
+        {/* Edge */}
+        {field("Edge Hypothesis",
+          <input style={input} value={edge} onChange={e => setEdge(e.target.value)} placeholder="Where does this strategy's edge come from?" />
+        )}
+
+        {/* Actions */}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+          <button onClick={onClose} style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 11, padding: "8px 18px", borderRadius: 5, cursor: "pointer", border: "1px solid #252d3d", background: "none", color: "#8891aa" }}>
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!canSave}
+            style={{
+              fontFamily: "Syne, sans-serif", fontSize: 12, fontWeight: 700, padding: "8px 20px",
+              borderRadius: 5, cursor: canSave ? "pointer" : "not-allowed",
+              border: "none",
+              background: canSave ? `linear-gradient(135deg, ${color}, ${color}bb)` : "#252d3d",
+              color: canSave ? "#000" : "#606880",
+              transition: "all 0.15s",
+            }}
+          >
+            Save Strategy
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function StrategyDetailPanel() {
@@ -133,6 +319,7 @@ export default function StrategyDetailPanel() {
   const [params, setParams] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   // Fetch strategy list
   useEffect(() => {
@@ -161,6 +348,13 @@ export default function StrategyDetailPanel() {
     params[`${active!.id}.${name}`] ?? active!.params.find(p => p.name === name)?.default ?? 0;
 
   const selectStrategy = (s: Strategy) => { setActive(s); setTab("overview"); };
+
+  const handleCreate = (s: Strategy) => {
+    setStrategies(prev => [...prev, s]);
+    setActive(s);
+    setTab("overview");
+    setShowCreate(false);
+  };
 
   // ── Loading / error states ──────────────────────────────────────────────────
 
@@ -223,7 +417,10 @@ export default function StrategyDetailPanel() {
         </div>
 
         <div style={{ padding: "10px 14px", borderTop: "1px solid #1e2330", background: "#111318" }}>
-          <div style={{ width: "100%", padding: "8px 0", background: "linear-gradient(135deg, #00d4a8, #00a885)", color: "#000", fontFamily: "Syne, sans-serif", fontSize: 12, fontWeight: 700, borderRadius: 6, textAlign: "center", cursor: "pointer" }}>
+          <div
+            onClick={() => setShowCreate(true)}
+            style={{ width: "100%", padding: "8px 0", background: "linear-gradient(135deg, #00d4a8, #00a885)", color: "#000", fontFamily: "Syne, sans-serif", fontSize: 12, fontWeight: 700, borderRadius: 6, textAlign: "center", cursor: "pointer" }}
+          >
             + Custom Strategy
           </div>
         </div>
@@ -492,6 +689,8 @@ export default function StrategyDetailPanel() {
           </button>
         </div>
       </div>
+
+      {showCreate && <CreateModal onSave={handleCreate} onClose={() => setShowCreate(false)} />}
     </div>
   );
 }
