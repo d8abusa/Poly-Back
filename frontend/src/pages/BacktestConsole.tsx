@@ -15,6 +15,7 @@ import PositionTracker from "../components/positions/PositionTracker";
 import HistoryView from "../components/history/HistoryView";
 import LiveFeed from "../components/feed/LiveFeed";
 import AuthStatus from "../components/shared/AuthStatus";
+import StrategyDetailPanel from "../components/shared/StrategyDetailPanel";
 
 // ── BacktestConsole — owns ALL shared state ────────────────────────────────────
 
@@ -43,7 +44,7 @@ export default function BacktestConsole() {
 
   // ── Execution mode + view ─────────────────────────────────────────────────────
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("confirm");
-  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "feed">("backtest");
+  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed">("backtest");
 
   // ── Toast ────────────────────────────────────────────────────────────────────
   const [toastMsg, setToastMsg] = useState("");
@@ -193,7 +194,7 @@ export default function BacktestConsole() {
               <span className="sel-count">⚡ {queuedMarkets.length} queued</span>
             )}
             {/* View nav */}
-            {(["backtest", "signals", "positions", "history", "feed"] as const).map(v => (
+            {(["backtest", "signals", "positions", "history", "strategies", "feed"] as const).map(v => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -206,7 +207,7 @@ export default function BacktestConsole() {
                   fontWeight: view === v ? 700 : 400,
                 }}
               >
-                {v === "backtest" ? "Backtest" : v === "signals" ? "Signals" : v === "positions" ? "Positions" : v === "history" ? "History" : "Feed"}
+                {v === "backtest" ? "Backtest" : v === "signals" ? "Signals" : v === "positions" ? "Positions" : v === "history" ? "History" : v === "strategies" ? "Strategies" : "Feed"}
               </button>
             ))}
             <HistoryDrawer
@@ -265,18 +266,28 @@ export default function BacktestConsole() {
             </div>
           </div>
         ) : view === "signals" ? (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
             <SignalQueue executionMode={executionMode} />
-            <div style={{ borderLeft: "1px solid var(--border)", overflow: "auto", padding: 14 }}>
+            <div style={{ width: 340, minWidth: 340, flexShrink: 0, display: "flex", flexDirection: "column" }}>
               <ExecutionLog />
             </div>
           </div>
         ) : view === "positions" ? (
-          <PositionTracker />
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <PositionTracker />
+          </div>
         ) : view === "history" ? (
-          <HistoryView />
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <HistoryView />
+          </div>
+        ) : view === "strategies" ? (
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <StrategyDetailPanel />
+          </div>
         ) : (
-          <LiveFeed markets={markets} />
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <LiveFeed markets={markets} />
+          </div>
         )}
 
         {/* Toast */}

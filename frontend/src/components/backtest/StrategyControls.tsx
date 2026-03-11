@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import ExecutionModeToggle from "../execution/ExecutionModeToggle";
 import ParamSliders from "./ParamSliders";
+import FormulaTooltip from "./FormulaTooltip";
 import type { ExecutionMode, StrategyMeta, StrategyParams } from "../../types";
 
 interface StrategyControlsProps {
@@ -22,6 +23,8 @@ interface StrategyFull extends StrategyMeta {
   complexity?: string;
   color?: string;
   status?: "live" | "soon";
+  formula?: string;
+  logic?: { entry?: string; exit?: string; size?: string };
 }
 
 // Fallback if API is unreachable
@@ -39,6 +42,7 @@ export default function StrategyControls({
   onExecutionModeChange,
 }: StrategyControlsProps) {
   const [strategies, setStrategies] = useState<StrategyFull[]>(FALLBACK);
+  const [hoveredStrategy, setHoveredStrategy] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/strategies")
@@ -55,6 +59,8 @@ export default function StrategyControls({
           complexity: s.complexity,
           color:      s.color,
           status:     s.status ?? "live",
+          formula:    s.formula,
+          logic:      s.logic,
         }));
         setStrategies(mapped);
         // If current selection no longer exists, default to first live one
@@ -77,7 +83,7 @@ export default function StrategyControls({
   return (
     <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
       <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
-        Strategy
+        Strategy <span style={{ opacity: 0.6 }}>(⚙️ hover for formula)</span>
       </div>
 
       {/* ── Carousel ── */}
@@ -85,20 +91,24 @@ export default function StrategyControls({
         {strategies.map(s => {
           const active   = activeStrategy === s.id;
           const isLive   = s.status ? s.status === "live" : LIVE_STRATEGIES.has(s.id);
+          const isHovered = hoveredStrategy === s.id;
           const accentColor = s.color ?? "var(--accent)";
 
           return (
             <button
               key={s.id}
               onClick={() => isLive && onStrategyChange(s.id)}
+              onMouseEnter={() => setHoveredStrategy(s.id)}
+              onMouseLeave={() => setHoveredStrategy(null)}
               title={s.tagline}
               style={{
                 flexShrink: 0,
                 width: 148,
                 padding: "9px 11px",
                 borderRadius: 6,
-                border: `1px solid ${active ? accentColor + "66" : "var(--border2)"}`,
-                background: active ? accentColor + "12" : "var(--surface2)",
+                border: `1px solid ${active ? accentColor + "66" : isHovered ? accentColor + "99" : "var(--border2)"}`,
+                background: active ? accentColor + "12" : isHovered ? accentColor + "08" : "var(--surface2)",
+                boxShadow: isHovered ? `0 0 0 1px ${accentColor}55, 0 4px 12px rgba(0,0,0,0.2)` : "none",
                 color: active ? accentColor : "var(--muted2)",
                 fontFamily: "IBM Plex Mono, monospace",
                 cursor: isLive ? "pointer" : "default",
@@ -122,6 +132,22 @@ export default function StrategyControls({
                   WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
                 }}>
                   {s.tagline}
+                </div>
+              )}
+
+              {/* Formula available indicator */}
+              {(s.formula || (s.logic && (s.logic.entry || s.logic.exit))) && isHovered && (
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  marginBottom: 6,
+                  fontSize: 9,
+                  color: accentColor,
+                  animation: "pulse 2s infinite",
+                }}>
+                  <span>≔</span>
+                  <span>Formula available</span>
                 </div>
               )}
 
@@ -172,6 +198,16 @@ export default function StrategyControls({
 
       <ParamSliders strategy={activeStrategy} params={strategyParams} onChange={onParamsChange} />
       <ExecutionModeToggle mode={executionMode} onChange={onExecutionModeChange} />
+
+      {/* Tooltip rendering */}
+      {hoveredStrategy && (() => {
+        const s = strategies.find(x => x.id === hoveredStrategy);
+        if (s?.formula || (s?.logic && (s.logic.entry || s.logic.exit))) {
+          return <FormulaTooltip key={hoveredStrategy} hoveredStrategy={s.id} formula={s.formula} logic={s.logic as any} accentColor={s.color ?? "#00d4a8"} />;
+        }
+        return null;
+      })()}
     </div>
   );
 }
+

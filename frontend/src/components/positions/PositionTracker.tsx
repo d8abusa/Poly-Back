@@ -350,7 +350,7 @@ export default function PositionTracker() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", flex: 1, overflow: "hidden" }}>
 
         {/* Left: positions table */}
-        <div style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}>
+        <div style={{ overflow: "auto", borderRight: "1px solid var(--border)", minHeight: 0 }}>
           {/* Table header */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid var(--border)", background: "var(--surface)", position: "sticky", top: 0, zIndex: 10 }}>
             <div style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 10, letterSpacing: "0.15em", color: "var(--muted2)", textTransform: "uppercase" }}>

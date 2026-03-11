@@ -90,8 +90,9 @@ export default function HistoryView() {
       .then(r => r.ok ? r.json() : null)
       .then((data: ClosedPosition[] | null) => {
         if (Array.isArray(data) && data.length > 0) setHistory(data);
+        else setHistory(MOCK_HISTORY); // fallback to mock data
       })
-      .catch(() => {}); // fall back to mock
+      .catch(() => setHistory(MOCK_HISTORY)); // also fallback on error
   }, []);
 
   // ── Derived stats ─────────────────────────────────────────────────────────
@@ -277,7 +278,7 @@ export default function HistoryView() {
             </div>
           </div>
 
-          <div style={{ overflowY: "auto", flex: 1 }}>
+          <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
@@ -421,7 +422,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 0,
     borderBottom: "1px solid #1e2a35",
     background: "#0d1117",
-    flexShrink: 0,
+    height: 180
   },
   chartCard: {
     padding: "14px 16px",

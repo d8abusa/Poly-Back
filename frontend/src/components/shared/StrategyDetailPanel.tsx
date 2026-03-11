@@ -40,7 +40,12 @@ interface Strategy {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function MiniEquityCurve({ data, color }: { data: number[]; color: string }) {
+function MiniEquityCurve({ data, color }: { data?: number[]; color: string }) {
+  if (!data || data.length < 2) return (
+    <div style={{ height: 50, display: "flex", alignItems: "center", justifyContent: "center", color: "#606880", fontSize: 10 }}>
+      No curve data
+    </div>
+  );
   const W = 200, H = 50, pad = 4;
   const min = Math.min(...data), max = Math.max(...data);
   const range = max - min || 0.01;
@@ -178,7 +183,7 @@ export default function StrategyDetailPanel() {
   // ── Layout ──────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "#0a0c0f", color: "#e8eaf0", fontFamily: "IBM Plex Mono, monospace", fontSize: 13, overflow: "hidden" }}>
+    <div style={{ display: "flex", flex: 1, height: "100%", background: "#0a0c0f", color: "#e8eaf0", fontFamily: "IBM Plex Mono, monospace", fontSize: 13, overflow: "hidden" }}>
 
       {/* ── LEFT: strategy list ── */}
       <div style={{ width: 220, borderRight: "1px solid #1e2330", display: "flex", flexDirection: "column", flexShrink: 0 }}>
@@ -285,7 +290,7 @@ export default function StrategyDetailPanel() {
 
               <div style={{ background: "#111318", border: `1px solid ${active.color}25`, borderRadius: 10, padding: 18 }}>
                 <div style={{ fontSize: 10, color: "#606880", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Signal Logic</div>
-                {Object.entries(active.logic).map(([k, v]) => (
+                {Object.entries(active.logic ?? {}).map(([k, v]) => (
                   <div key={k} style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 9, color: active.color, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>{k}</div>
                     <div style={{ fontSize: 11, color: "#e8eaf0", background: "#181c23", padding: "6px 10px", borderRadius: 5, border: "1px solid #252d3d", fontFamily: "IBM Plex Mono, monospace", lineHeight: 1.5 }}>{v}</div>
@@ -298,9 +303,9 @@ export default function StrategyDetailPanel() {
                 <MiniEquityCurve data={active.synthetic_curve} color={active.color} />
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 4 }}>
                   {([
-                    ["Win Rate",   `${active.performance.win_rate}%`,          "g"],
-                    ["Avg Return", `+${active.performance.avg_return}%`,        "g"],
-                    ["Sharpe",     String(active.performance.sharpe),            "b"],
+                    ["Win Rate",   `${active.performance?.win_rate ?? "—"}%`,          "g"],
+                    ["Avg Return", `+${active.performance?.avg_return ?? "—"}%`,        "g"],
+                    ["Sharpe",     String(active.performance?.sharpe ?? "—"),            "b"],
                   ] as [string, string, string][]).map(([l, v, c]) => (
                     <div key={l} style={{ background: "#181c23", borderRadius: 6, padding: "8px 10px", border: "1px solid #252d3d" }}>
                       <div style={{ fontSize: 9, color: "#606880", marginBottom: 2 }}>{l}</div>
@@ -330,7 +335,7 @@ export default function StrategyDetailPanel() {
               <div style={{ background: "#111318", border: "1px solid #1e2330", borderRadius: 10, padding: 22 }}>
                 <div style={{ fontSize: 10, color: "#606880", textTransform: "uppercase", letterSpacing: 1, marginBottom: 14 }}>Signal Breakdown</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {Object.entries(active.logic).map(([key, val]) => (
+                  {Object.entries(active.logic ?? {}).map(([key, val]) => (
                     <div key={key} style={{ display: "grid", gridTemplateColumns: "80px 1fr", gap: 14, alignItems: "start" }}>
                       <div style={{ fontSize: 10, fontWeight: 700, color: active.color, textTransform: "uppercase", letterSpacing: 0.8, paddingTop: 8 }}>{key}</div>
                       <div style={{ fontSize: 12, color: "#e8eaf0", background: "#181c23", padding: "8px 12px", borderRadius: 6, border: "1px solid #252d3d", fontFamily: "IBM Plex Mono, monospace", lineHeight: 1.6 }}>{val}</div>
@@ -405,11 +410,11 @@ export default function StrategyDetailPanel() {
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 1, background: "#1e2330", borderRadius: 10, overflow: "hidden", border: "1px solid #1e2330" }}>
                 {([
-                  ["Win Rate",    `${active.performance.win_rate}%`,    "#22c55e"],
-                  ["Avg Return",  `+${active.performance.avg_return}%`, "#22c55e"],
-                  ["Sharpe Ratio", String(active.performance.sharpe),    "#7b61ff"],
-                  ["Max Drawdown", `-${active.performance.max_dd}%`,    "#ef4444"],
-                  ["Total Trades", String(active.performance.trades),   "#00d4a8"],
+                  ["Win Rate",    `${active.performance?.win_rate ?? "—"}%`,    "#22c55e"],
+                  ["Avg Return",  `+${active.performance?.avg_return ?? "—"}%`, "#22c55e"],
+                  ["Sharpe Ratio", String(active.performance?.sharpe ?? "—"),    "#7b61ff"],
+                  ["Max Drawdown", `-${active.performance?.max_dd ?? "—"}%`,    "#ef4444"],
+                  ["Total Trades", String(active.performance?.trades ?? "—"),   "#00d4a8"],
                 ] as [string, string, string][]).map(([l, v, c]) => (
                   <div key={l} style={{ background: "#111318", padding: "16px 18px" }}>
                     <div style={{ fontSize: 9, color: "#606880", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 }}>{l}</div>
@@ -422,7 +427,7 @@ export default function StrategyDetailPanel() {
               <div style={{ background: "#111318", border: "1px solid #1e2330", borderRadius: 10, padding: 20 }}>
                 <div style={{ fontSize: 10, color: "#606880", textTransform: "uppercase", letterSpacing: 1, marginBottom: 14 }}>Simulated Equity Curve (Synthetic Data)</div>
                 <div style={{ height: 120 }}>
-                  <MiniEquityCurve data={[...active.synthetic_curve, ...active.synthetic_curve.map(v => Math.min(0.99, v * 1.05))]} color={active.color} />
+                  <MiniEquityCurve data={active.synthetic_curve ? [...active.synthetic_curve, ...active.synthetic_curve.map(v => Math.min(0.99, v * 1.05))] : undefined} color={active.color} />
                 </div>
                 <div style={{ fontSize: 10, color: "#606880", marginTop: 8, fontStyle: "italic" }}>
                   Shown on synthetic data to illustrate strategy behavior — not actual backtest results. Run a backtest to see real performance on your selected markets.
@@ -441,7 +446,7 @@ export default function StrategyDetailPanel() {
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10, padding: 20 }}>
                 <div style={{ fontSize: 10, color: "#ef4444", textTransform: "uppercase", letterSpacing: 1, marginBottom: 14 }}>Known Risk Factors</div>
-                {active.risks.map((r, i) => (
+                {(active.risks ?? []).map((r, i) => (
                   <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
                     <span style={{ width: 20, height: 20, borderRadius: "50%", background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#ef4444", flexShrink: 0 }}>
                       {i + 1}
@@ -457,7 +462,7 @@ export default function StrategyDetailPanel() {
                   ["Overall Risk",       active.risk,                    riskColor(active.risk)],
                   ["Complexity",         active.complexity,              "#7b61ff"],
                   ["Category",           active.category,               active.color],
-                  ["Max Drawdown (hist.)", `-${active.performance.max_dd}%`, "#ef4444"],
+                  ["Max Drawdown (hist.)", `-${active.performance?.max_dd ?? "—"}%`, "#ef4444"],
                 ] as [string, string, string][]).map(([l, v, c]) => (
                   <div key={l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #1e2330" }}>
                     <span style={{ fontSize: 11, color: "#8891aa" }}>{l}</span>
