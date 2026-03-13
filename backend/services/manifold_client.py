@@ -35,17 +35,16 @@ class ManifoldClient(BaseExchangeClient):
         self,
         limit: int = 50,
         offset: int = 0,
-        sort: str = "liquidity",   # newest | score | liquidity
+        sort: str = "last-bet-time",   # created-time | updated-time | last-bet-time | last-comment-time
         **kwargs,
     ) -> list[dict]:
-        params = {
-            "limit":  min(limit + offset, 1000),
-            "sort":   sort,
-        }
+        # Fetch 4x requested to absorb MULTIPLE_CHOICE/etc filtering losses
+        fetch_n = min((limit + offset) * 4, 1000)
+        params  = {"limit": fetch_n, "sort": sort}
         resp = await self._client.get(f"{MANIFOLD_BASE}/markets", params=params)
         resp.raise_for_status()
         markets = resp.json()
-        # Filter to binary YES/NO markets only
+        # Keep only binary YES/NO markets
         markets = [m for m in markets if m.get("outcomeType") == "BINARY"]
         return markets[offset:offset + limit]
 

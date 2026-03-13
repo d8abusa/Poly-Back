@@ -5,12 +5,12 @@ Kalshi is a CFTC-regulated US prediction market exchange.
 Public endpoints require no authentication.
 Authenticated endpoints (order placement) require API key + password.
 
-API base: https://trading-api.kalshi.com/trade-api/v2
+API base: https://api.elections.kalshi.com/trade-api/v2
 Docs:     https://trading-api.kalshi.com/docs
 """
 
 import logging
-import time
+import time as _time
 from typing import Optional
 
 import httpx
@@ -19,7 +19,7 @@ from .base_client import BaseExchangeClient
 
 log = logging.getLogger(__name__)
 
-KALSHI_BASE = "https://trading-api.kalshi.com/trade-api/v2"
+KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 # Kalshi category → our canonical category
 _KALSHI_CAT_MAP: dict[str, str] = {
@@ -38,6 +38,7 @@ _KALSHI_CAT_MAP: dict[str, str] = {
     "Healthcare":     "Science & Tech",
     "Legal":          "Other",
     "Culture":        "Pop Culture",
+    "World":          "Other",
 }
 
 
@@ -45,6 +46,23 @@ def _map_kalshi_category(raw_cat: str | None) -> str:
     if not raw_cat:
         return "Other"
     return _KALSHI_CAT_MAP.get(raw_cat, "Other")
+
+
+def _dollars_to_prob(val) -> float:
+    """Convert a Kalshi _dollars string/float (0.0–1.0) to probability."""
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _series_from_ticker(ticker: str) -> str:
+    """
+    Derive series ticker from market/event ticker.
+    e.g. 'KXELONMARS-99' → 'KXELONMARS'
+         'KXNBAPTS-26MAR13CLEDAL-CLEJHARDEN1-15' → 'KXNBAPTS'
+    """
+    return ticker.split("-")[0]
 
 
 class KalshiClient(BaseExchangeClient):
@@ -64,59 +82,60 @@ class KalshiClient(BaseExchangeClient):
         status: str = "open",
         **kwargs,
     ) -> list[dict]:
-        params = {"limit": min(limit, 200), "status": status}
-        # Kalshi uses cursor-based pagination; simulate offset by fetching enough
-        if offset > 0:
-            # Fetch offset + limit and slice — acceptable for UI page sizes
-            params["limit"] = min(offset + limit, 200)
-
+        params: dict = {"limit": min(limit + offset, 200), "status": status}
         resp = await self._client.get(f"{KALSHI_BASE}/markets", params=params)
         resp.raise_for_status()
         markets = resp.json().get("markets", [])
-        return markets[offset:offset + limit] if offset > 0 else markets
+        return markets[offset:offset + limit]
 
     def normalize_market(self, raw: dict) -> dict:
         ticker = raw.get("ticker", "")
-        # Prices are in cents (0–100) → divide by 100
-        yes_bid  = raw.get("yes_bid",   0) or 0
-        yes_ask  = raw.get("yes_ask",   0) or 0
-        last_p   = raw.get("last_price", 0) or 0
-        # Best estimate of current probability
-        if yes_bid and yes_ask:
-            prob = ((yes_bid + yes_ask) / 2) / 100
-        elif last_p:
-            prob = last_p / 100
+
+        # New API uses _dollars fields (0.0–1.0 = probability directly)
+        yes_bid = _dollars_to_prob(raw.get("yes_bid_dollars", 0))
+        yes_ask = _dollars_to_prob(raw.get("yes_ask_dollars", 0))
+        last_p  = _dollars_to_prob(raw.get("last_price_dollars", 0))
+
+        if yes_bid > 0 and yes_ask > 0:
+            prob = (yes_bid + yes_ask) / 2
+        elif last_p > 0:
+            prob = last_p
         else:
             prob = 0.5
 
-        resolved = raw.get("status", "") in ("finalized", "settled")
-        resolution = raw.get("result", None)
-        outcome = None
-        if resolved and resolution:
-            outcome = "YES" if resolution.lower() == "yes" else "NO"
+        status   = raw.get("status", "")
+        resolved = status in ("finalized", "settled", "closed")
+        result   = raw.get("result", "")
+        outcome  = None
+        if resolved and result:
+            outcome = "YES" if result.lower() == "yes" else "NO"
 
         close_time = raw.get("close_time") or raw.get("expected_expiration_time") or ""
-        end_date = close_time[:10] if close_time else ""
+        end_date   = close_time[:10] if close_time else ""
 
+        # Category — Kalshi puts it on the event, not always the market
         category = _map_kalshi_category(raw.get("category"))
-        # Fall back to text matching on title
         if category == "Other":
             from .polymarket_client import _categorize_from_text
             category = _categorize_from_text(raw.get("title", ""))
+
+        # Volume — new API uses volume_fp (floating point string)
+        vol = float(raw.get("volume_fp", 0) or raw.get("volume", 0) or 0)
+        liq = float(raw.get("liquidity_dollars", 0) or 0)
 
         return {
             "id":           ticker,
             "condition_id": ticker,
             "token_id":     ticker,
-            "title":        raw.get("title", raw.get("subtitle", ticker)),
+            "title":        raw.get("title") or raw.get("subtitle") or ticker,
             "category":     category,
             "prob":         round(prob, 4),
-            "volume":       float(raw.get("volume", 0) or 0),
-            "liquidity":    float(raw.get("liquidity", 0) or 0),
+            "volume":       vol,
+            "liquidity":    liq,
             "resolved":     resolved,
             "outcome":      outcome,
             "end_date":     end_date,
-            "tags":         [raw.get("category", "")] if raw.get("category") else [],
+            "tags":         [raw.get("category")] if raw.get("category") else [],
             "exchange":     "kalshi",
         }
 
@@ -129,50 +148,47 @@ class KalshiClient(BaseExchangeClient):
         interval: str = "max",
         fidelity: int = 60,
     ) -> list[dict]:
-        ticker = token_id or market_id
-        # Kalshi requires explicit start/end timestamps
-        import time as _time
-        end_ts   = int(_time.time())
-        # "max" → go back 2 years
-        start_ts = end_ts - (2 * 365 * 24 * 3600)
+        ticker      = token_id or market_id
+        series      = _series_from_ticker(ticker)
+        end_ts      = int(_time.time())
+        start_ts    = end_ts - (2 * 365 * 24 * 3600)  # max = 2 years
 
-        # period_interval: minutes. Map our interval strings → minutes
         _interval_map = {
             "1m": 1, "5m": 5, "15m": 15, "30m": 30,
-            "1h": 60, "6h": 360, "1d": 1440, "max": 60,
+            "1h": 60, "6h": 360, "1d": 1440, "max": 1440,
         }
-        period_interval = _interval_map.get(interval, 60)
+        period_interval = _interval_map.get(interval, 1440)
 
-        params = {
-            "start_ts":       start_ts,
-            "end_ts":         end_ts,
-            "period_interval": period_interval,
-        }
-        resp = await self._client.get(
-            f"{KALSHI_BASE}/markets/{ticker}/candlesticks",
-            params=params,
-        )
+        params = {"start_ts": start_ts, "end_ts": end_ts, "period_interval": period_interval}
+        url    = f"{KALSHI_BASE}/series/{series}/markets/{ticker}/candlesticks"
+
+        resp = await self._client.get(url, params=params)
         resp.raise_for_status()
         candles = resp.json().get("candlesticks", [])
 
-        return [
-            {"t": int(c["end_period_ts"]), "p": round(c["yes_price"] / 100, 4)}
-            for c in candles
-            if c.get("yes_price") is not None
-        ]
+        result = []
+        for c in candles:
+            ts = c.get("end_period_ts")
+            # New API: price.close_dollars (already 0–1)
+            price_block = c.get("price", {})
+            p = _dollars_to_prob(price_block.get("close_dollars") or price_block.get("mean_dollars"))
+            if ts and p > 0:
+                result.append({"t": int(ts), "p": round(p, 4)})
+
+        return result
 
     # ── Live feed ────────────────────────────────────────────────────────────
 
     async def get_order_book(self, market_id: str, token_id: Optional[str] = None) -> dict:
         ticker = token_id or market_id
+        series = _series_from_ticker(ticker)
         try:
-            resp = await self._client.get(f"{KALSHI_BASE}/orderbook/{ticker}")
+            resp = await self._client.get(f"{KALSHI_BASE}/series/{series}/markets/{ticker}/orderbook")
             resp.raise_for_status()
-            ob = resp.json().get("orderbook", {})
-            # yes bids/asks come as [[price_cents, qty], ...]
-            bids = [{"price": p / 100, "size": float(q)} for p, q in (ob.get("yes", []) or [])]
-            asks = [{"price": p / 100, "size": float(q)} for p, q in (ob.get("no",  []) or [])]
-            # Sort: bids descending, asks ascending
+            ob   = resp.json().get("orderbook", {})
+            # New API: yes/no lists of [price_dollars_str, qty]
+            bids = [{"price": _dollars_to_prob(p), "size": float(q)} for p, q in (ob.get("yes", []) or [])]
+            asks = [{"price": _dollars_to_prob(p), "size": float(q)} for p, q in (ob.get("no",  []) or [])]
             bids.sort(key=lambda x: -x["price"])
             asks.sort(key=lambda x:  x["price"])
             return {"bids": bids, "asks": asks}
@@ -181,7 +197,7 @@ class KalshiClient(BaseExchangeClient):
             return {"bids": [], "asks": []}
 
     async def get_recent_trades(self, market_id: str, token_id: Optional[str] = None, limit: int = 20) -> list:
-        # Kalshi trades endpoint requires auth; return empty for public access
+        # Kalshi trades require auth; return empty for public mode
         return []
 
     async def get_last_price(self, market_id: str, token_id: Optional[str] = None) -> Optional[float]:
@@ -189,9 +205,9 @@ class KalshiClient(BaseExchangeClient):
         try:
             resp = await self._client.get(f"{KALSHI_BASE}/markets/{ticker}")
             resp.raise_for_status()
-            m = resp.json().get("market", {})
-            lp = m.get("last_price")
-            return lp / 100 if lp is not None else None
+            m = resp.json().get("market", resp.json())
+            lp = m.get("last_price_dollars")
+            return _dollars_to_prob(lp) if lp is not None else None
         except Exception:
             return None
 
@@ -202,6 +218,7 @@ class KalshiClient(BaseExchangeClient):
 # ── Singleton ─────────────────────────────────────────────────────────────────
 
 _kalshi_client: Optional[KalshiClient] = None
+
 
 def get_kalshi_client() -> KalshiClient:
     global _kalshi_client
