@@ -2,6 +2,14 @@
 
 export type ExecutionMode  = "auto" | "confirm" | "alert_only";
 export type SignalStatus   = "pending" | "approved" | "rejected" | "auto_executed";
+export type ExchangeId     = "polymarket" | "kalshi" | "manifold";
+
+export interface ExchangeInfo {
+  id:          ExchangeId;
+  name:        string;
+  type:        "real_money" | "play_money";
+  description: string;
+}
 
 export interface Signal {
   id:               string;
@@ -82,6 +90,7 @@ export interface Market {
   outcome: string | null;
   end_date: string;
   tags: string[];
+  exchange: ExchangeId;
 }
 
 export interface HistoryPoint {

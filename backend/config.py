@@ -19,6 +19,10 @@ class Settings:
     private_key:    str | None = os.getenv("POLY_PRIVATE_KEY") or None
     chain_id:       int        = int(os.getenv("POLY_CHAIN_ID", "137"))
 
+    # ── Kalshi credentials (optional — public endpoints work without auth) ────
+    kalshi_api_key:      str | None = os.getenv("KALSHI_API_KEY") or None
+    kalshi_api_password: str | None = os.getenv("KALSHI_API_PASSWORD") or None
+
     # ── Derived auth status ────────────────────────────────────────────────────
     @property
     def has_api_creds(self) -> bool:

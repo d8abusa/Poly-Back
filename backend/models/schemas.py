@@ -63,6 +63,7 @@ class MarketSummary(BaseModel):
     outcome: Optional[str]
     end_date: str
     tags: List[str]
+    exchange: str = "polymarket"
 
 
 class BacktestRequest(BaseModel):

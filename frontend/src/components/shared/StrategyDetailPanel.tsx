@@ -129,33 +129,35 @@ const CATEGORIES    = ["Mean Reversion", "Trend Following", "Statistical Arbitra
 const RISK_LEVELS   = ["Low", "Low-Medium", "Medium", "Medium-High", "High", "Variable"];
 const COMPLEXITIES  = ["Simple", "Moderate", "Advanced", "Expert"];
 
-// ── Custom Strategy Modal ─────────────────────────────────────────────────────
+// ── Strategy Form Modal (create + edit) ───────────────────────────────────────
 
-interface CreateModalProps {
+interface StrategyFormModalProps {
+  initial?: Strategy;
   onSave: (s: Strategy) => void;
   onClose: () => void;
 }
 
-function CreateModal({ onSave, onClose }: CreateModalProps) {
-  const [name,        setName]        = useState("");
-  const [tagline,     setTagline]     = useState("");
-  const [category,    setCategory]    = useState(CATEGORIES[0]);
-  const [risk,        setRisk]        = useState(RISK_LEVELS[2]);
-  const [complexity,  setComplexity]  = useState(COMPLEXITIES[0]);
-  const [color,       setColor]       = useState(PRESET_COLORS[0]);
-  const [description, setDescription] = useState("");
-  const [formula,     setFormula]     = useState("");
-  const [entryLogic,  setEntryLogic]  = useState("");
-  const [exitLogic,   setExitLogic]   = useState("");
-  const [edge,        setEdge]        = useState("");
+function CreateModal({ initial, onSave, onClose }: StrategyFormModalProps) {
+  const isEdit = !!initial;
+  const [name,        setName]        = useState(initial?.name        ?? "");
+  const [tagline,     setTagline]     = useState(initial?.tagline     ?? "");
+  const [category,    setCategory]    = useState(initial?.category    ?? CATEGORIES[0]);
+  const [risk,        setRisk]        = useState(initial?.risk        ?? RISK_LEVELS[2]);
+  const [complexity,  setComplexity]  = useState(initial?.complexity  ?? COMPLEXITIES[0]);
+  const [color,       setColor]       = useState(initial?.color       ?? PRESET_COLORS[0]);
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [formula,     setFormula]     = useState(initial?.formula     ?? "");
+  const [entryLogic,  setEntryLogic]  = useState(initial?.logic?.entry ?? "");
+  const [exitLogic,   setExitLogic]   = useState(initial?.logic?.exit  ?? "");
+  const [edge,        setEdge]        = useState(initial?.edge        ?? "");
 
   const canSave = name.trim().length > 0;
 
   const handleSave = () => {
     if (!canSave) return;
-    const id = `custom_${Date.now()}`;
     const strategy: Strategy = {
-      id,
+      ...(initial ?? {}),
+      id:          initial?.id ?? `custom_${Date.now()}`,
       name:        name.trim(),
       tagline:     tagline.trim() || "Custom strategy",
       category,
@@ -165,15 +167,16 @@ function CreateModal({ onSave, onClose }: CreateModalProps) {
       description: description.trim() || "No description provided.",
       formula:     formula.trim() || "—",
       logic: {
+        ...(initial?.logic ?? {}),
         entry: entryLogic.trim() || "—",
         exit:  exitLogic.trim()  || "—",
-        size:  "User-defined",
+        size:  initial?.logic?.size ?? "User-defined",
       },
-      edge:        edge.trim() || "User-defined edge hypothesis.",
-      risks:       ["Custom strategy — backtest thoroughly before deploying capital"],
-      performance: { win_rate: 0, avg_return: 0, sharpe: 0, max_dd: 0, trades: 0 },
-      synthetic_curve: undefined,
-      params:      [],
+      edge:            edge.trim() || "User-defined edge hypothesis.",
+      risks:           initial?.risks ?? ["Custom strategy — backtest thoroughly before deploying capital"],
+      performance:     initial?.performance ?? { win_rate: 0, avg_return: 0, sharpe: 0, max_dd: 0, trades: 0 },
+      synthetic_curve: initial?.synthetic_curve,
+      params:          initial?.params ?? [],
     };
     onSave(strategy);
   };
@@ -206,10 +209,10 @@ function CreateModal({ onSave, onClose }: CreateModalProps) {
         style={{ background: "#111318", border: "1px solid #252d3d", borderRadius: 10, padding: 24, width: 520, maxHeight: "85vh", overflowY: "auto", fontFamily: "IBM Plex Mono, monospace" }}
       >
         <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 16, color: color, marginBottom: 4 }}>
-          + Custom Strategy
+          {isEdit ? `Edit — ${initial!.name}` : "+ Custom Strategy"}
         </div>
         <div style={{ fontSize: 10, color: "#606880", marginBottom: 20 }}>
-          Saved locally — run a backtest to evaluate performance
+          {isEdit ? "Changes are saved locally" : "Saved locally — run a backtest to evaluate performance"}
         </div>
 
         {/* Name + tagline */}
@@ -302,7 +305,7 @@ function CreateModal({ onSave, onClose }: CreateModalProps) {
               transition: "all 0.15s",
             }}
           >
-            Save Strategy
+            {isEdit ? "Save Changes" : "Save Strategy"}
           </button>
         </div>
       </div>
@@ -320,6 +323,7 @@ export default function StrategyDetailPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showEdit,   setShowEdit]   = useState(false);
 
   // Fetch strategy list
   useEffect(() => {
@@ -354,6 +358,12 @@ export default function StrategyDetailPanel() {
     setActive(s);
     setTab("overview");
     setShowCreate(false);
+  };
+
+  const handleUpdate = (s: Strategy) => {
+    setStrategies(prev => prev.map(x => x.id === s.id ? s : x));
+    setActive(s);
+    setShowEdit(false);
   };
 
   // ── Loading / error states ──────────────────────────────────────────────────
@@ -446,6 +456,20 @@ export default function StrategyDetailPanel() {
               <span style={{ fontSize: 10, padding: "3px 10px", borderRadius: 4, background: "#181c23", color: "#8891aa", border: "1px solid #252d3d" }}>
                 {active.category}
               </span>
+              <button
+                onClick={() => setShowEdit(true)}
+                title="Edit strategy"
+                style={{
+                  marginLeft: 4, padding: "4px 10px", borderRadius: 5, cursor: "pointer",
+                  border: "1px solid #252d3d", background: "#181c23", color: "#8891aa",
+                  fontFamily: "IBM Plex Mono, monospace", fontSize: 11,
+                  transition: "all 0.12s",
+                }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.color = "#e8eaf0"; (e.target as HTMLElement).style.borderColor = "#606880"; }}
+                onMouseLeave={e => { (e.target as HTMLElement).style.color = "#8891aa"; (e.target as HTMLElement).style.borderColor = "#252d3d"; }}
+              >
+                ✎ Edit
+              </button>
             </div>
           </div>
 
@@ -691,6 +715,7 @@ export default function StrategyDetailPanel() {
       </div>
 
       {showCreate && <CreateModal onSave={handleCreate} onClose={() => setShowCreate(false)} />}
+      {showEdit   && <CreateModal initial={active} onSave={handleUpdate} onClose={() => setShowEdit(false)} />}
     </div>
   );
 }

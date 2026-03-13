@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
 import { globalCss } from "../styles";
-import type { Market, HistoryPoint, BatchBacktestResult, HistoryRun, ExecutionMode, StrategyParams } from "../types";
+import type { Market, HistoryPoint, BatchBacktestResult, HistoryRun, ExecutionMode, StrategyParams, ExchangeId } from "../types";
 import { DEFAULT_PARAMS } from "../components/backtest/ParamSliders";
 
 import MarketSearch from "../components/market/MarketSearch";
@@ -42,6 +42,9 @@ export default function BacktestConsole() {
   // ── Run history ──────────────────────────────────────────────────────────────
   const [historyRuns, setHistoryRuns] = useState<HistoryRun[]>([]);
 
+  // ── Exchange ──────────────────────────────────────────────────────────────────
+  const [exchange, setExchange] = useState<ExchangeId>("polymarket");
+
   // ── Execution mode + view ─────────────────────────────────────────────────────
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("confirm");
   const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed">("backtest");
@@ -53,7 +56,7 @@ export default function BacktestConsole() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch("/api/markets?limit=100&order=volume")
+    fetch(`/api/markets?limit=100&order=volume&exchange=${exchange}`)
       .then(r => {
         if (!r.ok) throw new Error(`API error ${r.status}`);
         return r.json();
@@ -64,25 +67,26 @@ export default function BacktestConsole() {
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [exchange]);
 
   // ── Fetch price history when selected market changes ─────────────────────────
   useEffect(() => {
-    if (!selectedMarket?.token_id || !selectedMarket?.condition_id) {
+    if (!selectedMarket?.id) {
       setPriceHistory(null);
       return;
     }
     setHistoryLoading(true);
     setPriceHistory(null);
+    const tid = selectedMarket.token_id ?? selectedMarket.id;
     fetch(
-      `/api/markets/${selectedMarket.condition_id}/history` +
-      `?token_id=${encodeURIComponent(selectedMarket.token_id)}&interval=max`
+      `/api/markets/${selectedMarket.id}/history` +
+      `?token_id=${encodeURIComponent(tid)}&interval=max&exchange=${exchange}`
     )
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(data => setPriceHistory(data.history ?? []))
       .catch(() => setPriceHistory(null))
       .finally(() => setHistoryLoading(false));
-  }, [selectedMarket?.condition_id]);
+  }, [selectedMarket?.id, exchange]);
 
   // ── Callbacks passed down to children ────────────────────────────────────────
 
@@ -116,13 +120,13 @@ export default function BacktestConsole() {
     showToast(`▶ Running ${activeStrategy} on ${runnable.length} market${runnable.length > 1 ? "s" : ""}…`);
 
     try {
-      const resp = await fetch("/api/backtest/batch", {
+      const resp = await fetch(`/api/backtest/batch?exchange=${exchange}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           markets: runnable.map(m => ({
             condition_id: m.condition_id ?? m.id,
-            token_id: m.token_id,
+            token_id: m.token_id ?? m.id,
           })),
           strategy: activeStrategy,
           ...strategyParams,
@@ -183,6 +187,33 @@ export default function BacktestConsole() {
             Poly<span>Back</span>
           </div>
           <div className="header-sub">Market Search</div>
+
+          {/* Exchange selector */}
+          <div style={{ display: "flex", gap: 2, marginLeft: 8 }}>
+            {(["polymarket", "kalshi", "manifold"] as const).map(ex => {
+              const labels: Record<string, string> = { polymarket: "Polymarket", kalshi: "Kalshi", manifold: "Manifold" };
+              const colors: Record<string, string> = { polymarket: "#00d4a8", kalshi: "#3b82f6", manifold: "#f59e0b" };
+              const active = exchange === ex;
+              return (
+                <button
+                  key={ex}
+                  onClick={() => { setExchange(ex); setMarkets([]); setSelectedMarket(null); setQueuedMarkets([]); }}
+                  style={{
+                    padding: "3px 10px", borderRadius: 4, cursor: "pointer",
+                    fontFamily: "IBM Plex Mono, monospace", fontSize: 10,
+                    border: `1px solid ${active ? `${colors[ex]}50` : "var(--border2)"}`,
+                    background: active ? `${colors[ex]}12` : "var(--surface2)",
+                    color: active ? colors[ex] : "var(--muted2)",
+                    fontWeight: active ? 700 : 400,
+                    transition: "all 0.12s",
+                  }}
+                >
+                  {labels[ex]}
+                </button>
+              );
+            })}
+          </div>
+
           <div className="header-right">
             {loading
               ? <span style={{ color: "var(--accent)", fontSize: 10 }}>Loading markets…</span>
