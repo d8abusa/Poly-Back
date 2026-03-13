@@ -10,8 +10,8 @@ export const globalCss = `
     --yes:#22c55e; --no:#ef4444;
     --text:#e8eaf0; --muted:#606880; --muted2:#8891aa;
   }
-  body { background:var(--bg); color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:13px; }
-  .root { display:flex; flex-direction:column; height:100vh; background:var(--bg); overflow:hidden; position:relative; }
+  body { margin:0; display:block; background:var(--bg); color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:13px; }
+  .root { display:flex; flex-direction:column; width:100%; height:100vh; background:var(--bg); overflow:hidden; position:relative; }
   .root::before { content:''; position:fixed; inset:0; background-image:linear-gradient(rgba(0,212,168,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,168,0.025) 1px,transparent 1px); background-size:40px 40px; pointer-events:none; z-index:0; }
 
   /* HEADER */

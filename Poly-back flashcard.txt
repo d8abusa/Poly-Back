@@ -1,0 +1,72 @@
+Would like a quick flashcard of prompts on starting the application and any switches or options for the commands                                
+                                                                                                                   
+● PolyBack — Quick Start Flashcard                                                                                                                
+                                                                                                                                                
+  ---                                                                                                                                             
+  Start Backend                                                                                                                                   
+  cd ~/quant_project/Polymarket                                                                                                                   
+  source venv/bin/activate                                  
+  uvicorn backend.main:app --reload --port 8000
+
+  ┌────────────────┬─────────────────────────────────────────────────────┐
+  │     Switch     │                       Effect                        │
+  ├────────────────┼─────────────────────────────────────────────────────┤
+  │ --reload       │ Auto-restart on code changes (dev mode)             │
+  ├────────────────┼─────────────────────────────────────────────────────┤
+  │ --port 8000    │ Port (change if 8000 is taken)                      │
+  ├────────────────┼─────────────────────────────────────────────────────┤
+  │ --host 0.0.0.0 │ Expose on local network (default is localhost only) │
+  ├────────────────┼─────────────────────────────────────────────────────┤
+  │ --workers 4    │ Multi-process (drop --reload when using this)       │
+  └────────────────┴─────────────────────────────────────────────────────┘
+
+  ---
+  Start Frontend
+  cd ~/quant_project/Polymarket/frontend
+  npm run dev
+
+  ┌─────────────────┬────────────────────────────────────────────────────┐
+  │     Command     │                       Effect                       │
+  ├─────────────────┼────────────────────────────────────────────────────┤
+  │ npm run dev     │ Dev server with hot reload — http://localhost:5173 │
+  ├─────────────────┼────────────────────────────────────────────────────┤
+  │ npm run build   │ Production build → frontend/dist/                  │
+  ├─────────────────┼────────────────────────────────────────────────────┤
+  │ npm run preview │ Serve the production build locally                 │
+  └─────────────────┴────────────────────────────────────────────────────┘
+
+  ---
+  Get / Rotate API Keys
+  source venv/bin/activate
+  python get_api_key.py                          # reads POLY_PRIVATE_KEY from .env
+  python get_api_key.py --key 0xYOUR_KEY         # pass key inline
+  python get_api_key.py --key 0xYOUR_KEY --chain-id 80002   # Amoy testnet
+
+  ---
+  URLs
+
+  ┌────────────────────┬────────────────────────────────────────────┐
+  │                    │                                            │
+  ├────────────────────┼────────────────────────────────────────────┤
+  │ App                │ http://localhost:5173                      │
+  ├────────────────────┼────────────────────────────────────────────┤
+  │ API docs (Swagger) │ http://localhost:8000/docs                 │
+  ├────────────────────┼────────────────────────────────────────────┤
+  │ Auth status check  │ http://localhost:8000/api/feed/auth/status │
+  └────────────────────┴────────────────────────────────────────────┘
+
+  ---
+  Useful one-liners
+  # Check backend is alive
+  curl http://localhost:8000/api/feed/auth/status
+
+  # Kill backend
+  pkill -f "uvicorn backend.main"
+
+  # Reinstall backend deps after pull
+  pip install -r requirements.txt
+
+  # Reinstall frontend deps after pull
+  cd frontend && npm install
+
+
