@@ -16,6 +16,7 @@ import HistoryView from "../components/history/HistoryView";
 import LiveFeed from "../components/feed/LiveFeed";
 import AuthStatus from "../components/shared/AuthStatus";
 import StrategyDetailPanel from "../components/shared/StrategyDetailPanel";
+import SettingsPanel from "../components/shared/SettingsPanel";
 
 // ── BacktestConsole — owns ALL shared state ────────────────────────────────────
 
@@ -43,7 +44,8 @@ export default function BacktestConsole() {
   const [historyRuns, setHistoryRuns] = useState<HistoryRun[]>([]);
 
   // ── Exchange ──────────────────────────────────────────────────────────────────
-  const [exchange, setExchange] = useState<ExchangeId>("polymarket");
+  const [exchange,     setExchange]     = useState<ExchangeId>("polymarket");
+  const [showSettings, setShowSettings] = useState(false);
 
   // ── Execution mode + view ─────────────────────────────────────────────────────
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("confirm");
@@ -247,6 +249,21 @@ export default function BacktestConsole() {
               onDeleteRun={handleDeleteRun}
             />
             <AuthStatus />
+            {/* Settings gear */}
+            <button
+              onClick={() => setShowSettings(true)}
+              title="Settings"
+              style={{
+                padding: "4px 9px", borderRadius: 5, cursor: "pointer",
+                border: "1px solid var(--border2)", background: "var(--surface2)",
+                color: "var(--muted2)", fontSize: 13, lineHeight: 1,
+                transition: "all 0.12s",
+              }}
+              onMouseEnter={e => { (e.target as HTMLElement).style.color = "#7b61ff"; (e.target as HTMLElement).style.borderColor = "rgba(123,97,255,0.4)"; }}
+              onMouseLeave={e => { (e.target as HTMLElement).style.color = "var(--muted2)"; (e.target as HTMLElement).style.borderColor = "var(--border2)"; }}
+            >
+              ⚙
+            </button>
           </div>
         </div>
 
@@ -320,6 +337,9 @@ export default function BacktestConsole() {
             <LiveFeed markets={markets} />
           </div>
         )}
+
+        {/* Settings panel */}
+        {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
 
         {/* Toast */}
         {toastMsg && (

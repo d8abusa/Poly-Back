@@ -6,7 +6,7 @@ Run: uvicorn backend.main:app --reload --port 8000
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import markets, backtest, strategies, signals, positions, feed
+from .routes import markets, backtest, strategies, signals, positions, feed, settings
 
 app = FastAPI(
     title="PolyBack API",
@@ -28,6 +28,7 @@ app.include_router(strategies.router)
 app.include_router(signals.router)
 app.include_router(positions.router)
 app.include_router(feed.router)
+app.include_router(settings.router)
 
 
 @app.get("/")
