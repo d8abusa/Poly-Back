@@ -1,0 +1,1 @@
+{"ts":"2026-03-08T15:21:31.674Z","stream":"stderr","chunk":"Error: unknown command \"80\" for \"ollama\"\n\nDid you mean this?\n\tps\n\tcp\n\trm\n\n"}

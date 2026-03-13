@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PolyBack — Position Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080a0d;
+    --bg2: #0d1117;
+    --bg3: #131920;
+    --border: #1e2a35;
+    --border2: #243040;
+    --teal: #00d4a8;
+    --teal-dim: #00d4a822;
+    --teal-mid: #00d4a855;
+    --amber: #f59e0b;
+    --amber-dim: #f59e0b22;
+    --red: #ef4444;
+    --red-dim: #ef444422;
+    --green: #22c55e;
+    --green-dim: #22c55e22;
+    --purple: #7b61ff;
+    --purple-dim: #7b61ff22;
+    --text: #e8eaf0;
+    --text2: #8892a4;
+    --text3: #4a5568;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--teal);
+    letter-spacing: 0.1em;
+  }
+
+  .logo span { color: var(--text2); font-weight: 300; }
+
+  .header-nav {
+    display: flex;
+    gap: 4px;
+  }
+
+  .nav-tab {
+    padding: 5px 14px;
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+    letter-spacing: 0.05em;
+    color: var(--text2);
+    cursor: pointer;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    transition: all 0.15s;
+    background: none;
+  }
+
+  .nav-tab:hover { color: var(--text); border-color: var(--border2); }
+  .nav-tab.active { color: var(--teal); border-color: var(--teal-mid); background: var(--teal-dim); }
+
+  .header-status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+  }
+
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Main layout */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    height: calc(100vh - 49px);
+  }
+
+  /* PnL Summary Bar */
+  .pnl-bar {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+  }
+
+  .pnl-cell {
+    padding: 14px 20px;
+    border-right: 1px solid var(--border);
+    position: relative;
+  }
+
+  .pnl-cell:last-child { border-right: none; }
+
+  .pnl-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    color: var(--text3);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .pnl-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  .pnl-value.pos { color: var(--green); }
+  .pnl-value.neg { color: var(--red); }
+  .pnl-value.neutral { color: var(--text); }
+  .pnl-value.teal { color: var(--teal); }
+
+  .pnl-sub {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--text3);
+    margin-top: 4px;
+  }
+
+  /* Positions panel */
+  .positions-panel {
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .panel-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    color: var(--text2);
+    text-transform: uppercase;
+  }
+
+  .panel-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .filter-btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    padding: 3px 10px;
+    border: 1px solid var(--border2);
+    border-radius: 2px;
+    background: none;
+    color: var(--text2);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .filter-btn:hover, .filter-btn.active {
+    color: var(--teal);
+    border-color: var(--teal-mid);
+    background: var(--teal-dim);
+  }
+
+  /* Position table */
+  .pos-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .pos-table thead th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    color: var(--text3);
+    text-transform: uppercase;
+    padding: 8px 20px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    background: var(--bg);
+    position: sticky;
+    top: 45px;
+  }
+
+  .pos-row {
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .pos-row:hover { background: var(--bg3); }
+  .pos-row.selected { background: #0d1a24; }
+  .pos-row.selected td:first-child { border-left: 2px solid var(--teal); }
+
+  .pos-row td {
+    padding: 11px 20px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .market-name {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+    font-size: 11px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 500;
+  }
+
+  .market-sub {
+    font-size: 9px;
+    color: var(--text3);
+    font-family: 'IBM Plex Mono', monospace;
+    margin-top: 2px;
+  }
+
+  .side-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 2px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+  }
+
+  .side-yes { background: var(--green-dim); color: var(--green); border: 1px solid #22c55e44; }
+  .side-no { background: var(--red-dim); color: var(--red); border: 1px solid #ef444444; }
+
+  .pnl-cell-val { font-weight: 500; }
+  .pnl-cell-val.pos { color: var(--green); }
+  .pnl-cell-val.neg { color: var(--red); }
+
+  .prob-bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .prob-bar {
+    width: 60px;
+    height: 3px;
+    background: var(--border2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .prob-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s ease;
+  }
+
+  .close-btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    padding: 3px 8px;
+    border: 1px solid var(--border2);
+    border-radius: 2px;
+    background: none;
+    color: var(--text3);
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.05em;
+  }
+
+  .close-btn:hover {
+    color: var(--red);
+    border-color: #ef444466;
+    background: var(--red-dim);
+  }
+
+  /* Right sidebar */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    background: var(--bg2);
+  }
+
+  .sidebar-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    color: var(--text3);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  /* Position Detail */
+  .detail-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text3);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    line-height: 1.8;
+  }
+
+  .detail-market {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 12px;
+    line-height: 1.4;
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .detail-item {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 8px 10px;
+  }
+
+  .detail-item-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8px;
+    letter-spacing: 0.12em;
+    color: var(--text3);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .detail-item-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .detail-item-val.pos { color: var(--green); }
+  .detail-item-val.neg { color: var(--red); }
+  .detail-item-val.teal { color: var(--teal); }
+
+  /* Risk gauges */
+  .gauge-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .gauge-row:last-child { margin-bottom: 0; }
+
+  .gauge-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--text2);
+    width: 100px;
+  }
+
+  .gauge-track {
+    flex: 1;
+    height: 4px;
+    background: var(--border2);
+    border-radius: 2px;
+    margin: 0 10px;
+    overflow: visible;
+    position: relative;
+  }
+
+  .gauge-fill {
+    height: 100%;
+    border-radius: 2px;
+    position: relative;
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .gauge-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--text2);
+    width: 36px;
+    text-align: right;
+  }
+
+  /* Activity log */
+  .log-item {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+  }
+
+  .log-time { color: var(--text3); white-space: nowrap; }
+  .log-msg { color: var(--text2); line-height: 1.5; }
+  .log-msg .highlight { color: var(--teal); }
+  .log-msg .pos { color: var(--green); }
+  .log-msg .neg { color: var(--red); }
+
+  /* Manual close modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+
+  .modal-overlay.open {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .modal {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 24px;
+    width: 340px;
+    transform: translateY(10px);
+    transition: transform 0.2s;
+  }
+
+  .modal-overlay.open .modal { transform: translateY(0); }
+
+  .modal-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--red);
+    margin-bottom: 8px;
+    letter-spacing: 0.1em;
+  }
+
+  .modal-market {
+    font-size: 13px;
+    color: var(--text);
+    margin-bottom: 16px;
+    line-height: 1.4;
+  }
+
+  .modal-info {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 12px;
+    margin-bottom: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--text2);
+    line-height: 1.8;
+  }
+
+  .modal-info .val { color: var(--text); font-weight: 500; }
+  .modal-info .pos { color: var(--green); }
+  .modal-info .neg { color: var(--red); }
+
+  .modal-btns {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    padding: 8px 16px;
+    border-radius: 3px;
+    cursor: pointer;
+    border: 1px solid;
+    letter-spacing: 0.05em;
+    transition: all 0.15s;
+  }
+
+  .btn-cancel {
+    background: none;
+    border-color: var(--border2);
+    color: var(--text2);
+  }
+
+  .btn-cancel:hover { border-color: var(--text3); color: var(--text); }
+
+  .btn-close-pos {
+    background: var(--red-dim);
+    border-color: #ef444466;
+    color: var(--red);
+  }
+
+  .btn-close-pos:hover { background: #ef444433; border-color: var(--red); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+  .tick-up { animation: tickUp 0.4s ease; }
+  .tick-down { animation: tickDown 0.4s ease; }
+
+  @keyframes tickUp {
+    0% { color: var(--green); }
+    100% { }
+  }
+  @keyframes tickDown {
+    0% { color: var(--red); }
+    100% { }
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="logo">POLY<span>BACK</span> // TRACKER</div>
+  <div class="header-nav">
+    <button class="nav-tab">Backtest</button>
+    <button class="nav-tab">Signals</button>
+    <button class="nav-tab active">Positions</button>
+    <button class="nav-tab">History</button>
+    <button class="nav-tab">Settings</button>
+  </div>
+  <div class="header-status">
+    <div class="status-dot"></div>
+    <span style="color:var(--text2)">LIVE</span>
+    <span style="color:var(--text3)" id="clock">--:--:--</span>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+
+  <!-- PnL Summary Bar -->
+  <div class="pnl-bar">
+    <div class="pnl-cell">
+      <div class="pnl-label">Total Unrealized PnL</div>
+      <div class="pnl-value pos" id="total-pnl">+$847.32</div>
+      <div class="pnl-sub">+4.23% overall</div>
+    </div>
+    <div class="pnl-cell">
+      <div class="pnl-label">Open Positions</div>
+      <div class="pnl-value teal" id="open-count">7</div>
+      <div class="pnl-sub">3 profitable · 4 at-risk</div>
+    </div>
+    <div class="pnl-cell">
+      <div class="pnl-label">Capital Deployed</div>
+      <div class="pnl-value neutral">$20,340</div>
+      <div class="pnl-sub">of $25,000 max</div>
+    </div>
+    <div class="pnl-cell">
+      <div class="pnl-label">Today's Realized</div>
+      <div class="pnl-value pos">+$312.10</div>
+      <div class="pnl-sub">2 closed today</div>
+    </div>
+    <div class="pnl-cell">
+      <div class="pnl-label">Max Drawdown</div>
+      <div class="pnl-value neg">-$203.45</div>
+      <div class="pnl-sub">8.1% of limit</div>
+    </div>
+    <div class="pnl-cell">
+      <div class="pnl-label">Win Rate</div>
+      <div class="pnl-value neutral">68.4%</div>
+      <div class="pnl-sub">13W / 6L all-time</div>
+    </div>
+  </div>
+
+  <!-- Positions Table -->
+  <div class="positions-panel">
+    <div class="panel-header">
+      <div class="panel-title">Open Positions</div>
+      <div class="panel-actions">
+        <button class="filter-btn active">All</button>
+        <button class="filter-btn">YES</button>
+        <button class="filter-btn">NO</button>
+        <button class="filter-btn">Winning</button>
+        <button class="filter-btn">At-Risk</button>
+      </div>
+    </div>
+    <table class="pos-table">
+      <thead>
+        <tr>
+          <th>Market</th>
+          <th>Side</th>
+          <th>Entry</th>
+          <th>Current</th>
+          <th>Prob</th>
+          <th>Shares</th>
+          <th>PnL</th>
+          <th>PnL%</th>
+          <th>Strategy</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="positions-tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- Right Sidebar -->
+  <div class="sidebar">
+
+    <!-- Position Detail -->
+    <div class="sidebar-section" style="flex:1">
+      <div class="section-label">Position Detail</div>
+      <div id="detail-content">
+        <div class="detail-empty">← Select a position<br>to view details</div>
+      </div>
+    </div>
+
+    <!-- Risk Gauges -->
+    <div class="sidebar-section">
+      <div class="section-label">Risk Gauges</div>
+      <div class="gauge-row">
+        <div class="gauge-label">Drawdown</div>
+        <div class="gauge-track">
+          <div class="gauge-fill" style="width:18%;background:var(--green)"></div>
+        </div>
+        <div class="gauge-val" style="color:var(--green)">18%</div>
+      </div>
+      <div class="gauge-row">
+        <div class="gauge-label">Exposure</div>
+        <div class="gauge-track">
+          <div class="gauge-fill" style="width:81%;background:var(--amber)"></div>
+        </div>
+        <div class="gauge-val" style="color:var(--amber)">81%</div>
+      </div>
+      <div class="gauge-row">
+        <div class="gauge-label">Concentration</div>
+        <div class="gauge-track">
+          <div class="gauge-fill" style="width:42%;background:var(--green)"></div>
+        </div>
+        <div class="gauge-val" style="color:var(--green)">42%</div>
+      </div>
+      <div class="gauge-row">
+        <div class="gauge-label">Daily Loss</div>
+        <div class="gauge-track">
+          <div class="gauge-fill" style="width:8%;background:var(--green)"></div>
+        </div>
+        <div class="gauge-val" style="color:var(--green)">8%</div>
+      </div>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="sidebar-section">
+      <div class="section-label">Activity Log</div>
+      <div id="activity-log"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Manual Close Modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-title">⚠ MANUAL CLOSE</div>
+    <div class="modal-market" id="modal-market">—</div>
+    <div class="modal-info" id="modal-info">—</div>
+    <div class="modal-btns">
+      <button class="btn btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-close-pos" onclick="confirmClose()">Close Position</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const positions = [
+  { id: 1, market: "Will the Fed cut rates at March 2025 FOMC meeting?", category: "Macro", side: "YES", entry: 0.34, current: 0.51, shares: 500, strategy: "Prob Drift", entryDate: "2025-02-18", exitTarget: 0.72, stopLoss: 0.20 },
+  { id: 2, market: "Will Trump invoke emergency powers before April?", category: "Politics", side: "NO", entry: 0.61, current: 0.45, shares: 300, strategy: "Mean Rev", entryDate: "2025-02-22", exitTarget: 0.25, stopLoss: 0.75 },
+  { id: 3, market: "Will BTC exceed $120k before June 2025?", category: "Crypto", side: "YES", entry: 0.28, current: 0.22, shares: 800, strategy: "Momentum", entryDate: "2025-02-25", exitTarget: 0.60, stopLoss: 0.15 },
+  { id: 4, market: "Will the US enter a recession in Q2 2025?", category: "Macro", side: "NO", entry: 0.42, current: 0.39, shares: 450, strategy: "Prob Drift", entryDate: "2025-03-01", exitTarget: 0.20, stopLoss: 0.58 },
+  { id: 5, market: "Will Nvidia stock exceed $200 before end of Q1?", category: "Equities", side: "YES", entry: 0.55, current: 0.67, shares: 250, strategy: "Momentum", entryDate: "2025-03-03", exitTarget: 0.80, stopLoss: 0.40 },
+  { id: 6, market: "Will the EU impose new AI regulation in 2025?", category: "Tech/Policy", side: "YES", entry: 0.71, current: 0.74, shares: 200, strategy: "Anchor", entryDate: "2025-03-04", exitTarget: 0.88, stopLoss: 0.55 },
+  { id: 7, market: "Will SpaceX Starship reach orbit before May 2025?", category: "Space", side: "NO", entry: 0.48, current: 0.36, shares: 350, strategy: "Mean Rev", entryDate: "2025-03-05", exitTarget: 0.20, stopLoss: 0.65 },
+];
+
+let selectedId = null;
+let closingId = null;
+
+const livePositions = positions.map(p => ({
+  ...p,
+  liveProb: p.current,
+  pnl: calcPnl(p, p.current)
+}));
+
+function calcPnl(pos, currentProb) {
+  if (pos.side === 'YES') return (currentProb - pos.entry) * pos.shares;
+  return (pos.entry - currentProb) * pos.shares;
+}
+
+function pnlPct(pos, current) {
+  const pnl = calcPnl(pos, current);
+  return (pnl / (pos.entry * pos.shares)) * 100;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('positions-tbody');
+  tbody.innerHTML = livePositions.map(pos => {
+    const pnl = calcPnl(pos, pos.liveProb);
+    const pct = pnlPct(pos, pos.liveProb);
+    const isPos = pnl >= 0;
+    const probPct = Math.round(pos.liveProb * 100);
+    const probColor = pos.side === 'YES'
+      ? (pos.liveProb > pos.entry ? 'var(--green)' : 'var(--red)')
+      : (pos.liveProb < pos.entry ? 'var(--green)' : 'var(--red)');
+
+    return `<tr class="pos-row${selectedId === pos.id ? ' selected' : ''}" onclick="selectPosition(${pos.id})">
+      <td>
+        <div class="market-name">${pos.market}</div>
+        <div class="market-sub">${pos.category} · ${pos.entryDate}</div>
+      </td>
+      <td><span class="side-badge side-${pos.side.toLowerCase()}">${pos.side}</span></td>
+      <td style="color:var(--text2)">${(pos.entry * 100).toFixed(0)}¢</td>
+      <td style="color:${probColor};font-weight:500">${(pos.liveProb * 100).toFixed(0)}¢</td>
+      <td>
+        <div class="prob-bar-wrap">
+          <div class="prob-bar">
+            <div class="prob-fill" style="width:${probPct}%;background:${probColor}"></div>
+          </div>
+          <span style="color:var(--text2);font-size:10px">${probPct}%</span>
+        </div>
+      </td>
+      <td style="color:var(--text2)">${pos.shares}</td>
+      <td class="pnl-cell-val ${isPos ? 'pos' : 'neg'}">${isPos ? '+' : ''}$${pnl.toFixed(2)}</td>
+      <td class="pnl-cell-val ${isPos ? 'pos' : 'neg'}">${isPos ? '+' : ''}${pct.toFixed(1)}%</td>
+      <td style="color:var(--text3);font-size:10px">${pos.strategy}</td>
+      <td><button class="close-btn" onclick="openModal(event, ${pos.id})">CLOSE</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function selectPosition(id) {
+  selectedId = id;
+  const pos = livePositions.find(p => p.id === id);
+  const pnl = calcPnl(pos, pos.liveProb);
+  const pct = pnlPct(pos, pos.liveProb);
+  const isPos = pnl >= 0;
+  const progress = pos.side === 'YES'
+    ? ((pos.liveProb - pos.entry) / (pos.exitTarget - pos.entry) * 100).toFixed(0)
+    : ((pos.entry - pos.liveProb) / (pos.entry - pos.exitTarget) * 100).toFixed(0);
+
+  document.getElementById('detail-content').innerHTML = `
+    <div class="detail-market">${pos.market}</div>
+    <div class="detail-grid">
+      <div class="detail-item">
+        <div class="detail-item-label">Side</div>
+        <div class="detail-item-val ${pos.side === 'YES' ? 'pos' : 'neg'}">${pos.side}</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-item-label">Strategy</div>
+        <div class="detail-item-val teal">${pos.strategy}</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-item-label">Entry Prob</div>
+        <div class="detail-item-val">${(pos.entry * 100).toFixed(0)}¢</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-item-label">Current Prob</div>
+        <div class="detail-item-val ${isPos ? 'pos' : 'neg'}">${(pos.liveProb * 100).toFixed(0)}¢</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-item-label">Exit Target</div>
+        <div class="detail-item-val">${(pos.exitTarget * 100).toFixed(0)}¢</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-item-label">Stop Loss</div>
+        <div class="detail-item-val neg">${(pos.stopLoss * 100).toFixed(0)}¢</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-item-label">Shares</div>
+        <div class="detail-item-val">${pos.shares}</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-item-label">Capital</div>
+        <div class="detail-item-val">$${(pos.entry * pos.shares).toFixed(0)}</div>
+      </div>
+      <div class="detail-item" style="grid-column:1/-1">
+        <div class="detail-item-label">Unrealized PnL</div>
+        <div class="detail-item-val ${isPos ? 'pos' : 'neg'}" style="font-size:18px">${isPos ? '+' : ''}$${pnl.toFixed(2)} <span style="font-size:12px">(${isPos ? '+' : ''}${pct.toFixed(1)}%)</span></div>
+      </div>
+      <div class="detail-item" style="grid-column:1/-1">
+        <div class="detail-item-label">Target Progress</div>
+        <div style="margin-top:6px">
+          <div style="height:4px;background:var(--border2);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${Math.max(0,Math.min(100,progress))}%;background:var(--teal);border-radius:2px;transition:width 0.5s"></div>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text3);margin-top:4px">${Math.max(0,progress)}% to exit target</div>
+        </div>
+      </div>
+    </div>
+    <button class="btn btn-close-pos" style="margin-top:14px;width:100%;text-align:center" onclick="openModal(event,${pos.id})">⚠ Manual Close Position</button>
+  `;
+  renderTable();
+}
+
+function openModal(e, id) {
+  e.stopPropagation();
+  closingId = id;
+  const pos = livePositions.find(p => p.id === id);
+  const pnl = calcPnl(pos, pos.liveProb);
+  const isPos = pnl >= 0;
+  document.getElementById('modal-market').textContent = pos.market;
+  document.getElementById('modal-info').innerHTML = `
+    Side: <span class="val">${pos.side}</span><br>
+    Entry: <span class="val">${(pos.entry*100).toFixed(0)}¢</span> → Current: <span class="val">${(pos.liveProb*100).toFixed(0)}¢</span><br>
+    Shares: <span class="val">${pos.shares}</span><br>
+    Est. PnL at close: <span class="${isPos?'pos':'neg'}">${isPos?'+':''}$${pnl.toFixed(2)}</span>
+  `;
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+  closingId = null;
+}
+
+function confirmClose() {
+  if (!closingId) return;
+  const idx = livePositions.findIndex(p => p.id === closingId);
+  const pos = livePositions[idx];
+  const pnl = calcPnl(pos, pos.liveProb);
+  addLog(`Closed <span class="highlight">${pos.market.substring(0,40)}…</span>`, `PnL: <span class="${pnl>=0?'pos':'neg'}">${pnl>=0?'+':''}$${pnl.toFixed(2)}</span>`);
+  livePositions.splice(idx, 1);
+  if (selectedId === closingId) {
+    selectedId = null;
+    document.getElementById('detail-content').innerHTML = '<div class="detail-empty">← Select a position<br>to view details</div>';
+  }
+  closeModal();
+  renderTable();
+  document.getElementById('open-count').textContent = livePositions.length;
+}
+
+const logs = [
+  { time: '14:32:11', msg: 'Position opened: <span class="highlight">Fed rate cut</span> YES @ 34¢' },
+  { time: '14:18:44', msg: 'Exit signal fired: <span class="highlight">EU AI Reg</span> target 88¢ approaching' },
+  { time: '13:55:02', msg: 'Stop loss check: <span class="highlight">BTC >120k</span> — 22¢ (limit 15¢)' },
+  { time: '13:30:17', msg: 'Realized: <span class="highlight">Inflation Q1</span> closed <span class="pos">+$189.00</span>' },
+  { time: '12:58:33', msg: 'Strategy signal reversed: <span class="highlight">Oil >$90</span> exited <span class="pos">+$123.10</span>' },
+];
+
+function addLog(msg1, msg2 = '') {
+  const now = new Date();
+  const time = now.toTimeString().substring(0,8);
+  logs.unshift({ time, msg: msg1 + (msg2 ? ' · ' + msg2 : '') });
+  renderLogs();
+}
+
+function renderLogs() {
+  document.getElementById('activity-log').innerHTML = logs.slice(0,8).map(l =>
+    `<div class="log-item"><span class="log-time">${l.time}</span><span class="log-msg">${l.msg}</span></div>`
+  ).join('');
+}
+
+// Live prob simulation
+function tick() {
+  livePositions.forEach(pos => {
+    const drift = (Math.random() - 0.49) * 0.008;
+    pos.liveProb = Math.max(0.02, Math.min(0.98, pos.liveProb + drift));
+  });
+
+  // Update total PnL
+  const total = livePositions.reduce((sum, p) => sum + calcPnl(p, p.liveProb), 0);
+  const totalEl = document.getElementById('total-pnl');
+  totalEl.textContent = (total >= 0 ? '+' : '') + '$' + Math.abs(total).toFixed(2);
+  totalEl.className = 'pnl-value ' + (total >= 0 ? 'pos' : 'neg');
+
+  renderTable();
+  if (selectedId) selectPosition(selectedId);
+}
+
+// Clock
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toTimeString().substring(0,8);
+}
+
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+// Nav tabs
+document.querySelectorAll('.nav-tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+document.getElementById('modal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+renderTable();
+renderLogs();
+setInterval(tick, 2000);
+setInterval(updateClock, 1000);
+updateClock();
+</script>
+</body>
+</html>

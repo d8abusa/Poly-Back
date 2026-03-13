@@ -78,21 +78,18 @@ const ChartTooltip = ({ active, payload, label }: any) => {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function HistoryView() {
-  const [history, setHistory] = useState<ClosedPosition[]>([]);
+  const [history, setHistory] = useState<ClosedPosition[]>(MOCK_HISTORY);
   const [filterStrategy, setFilterStrategy] = useState<string>("All");
   const [filterReason, setFilterReason]     = useState<string>("All");
   const [sortKey, setSortKey]               = useState<"closed_at" | "realized_pnl">("closed_at");
   const [selectedId, setSelectedId]         = useState<number | null>(null);
 
-  // Fetch real data — API returns array directly shaped to match ClosedPosition
+  // Fetch real data
   useEffect(() => {
     fetch("/api/positions/closed")
       .then(r => r.ok ? r.json() : null)
-      .then((data: ClosedPosition[] | null) => {
-        if (Array.isArray(data) && data.length > 0) setHistory(data);
-        else setHistory(MOCK_HISTORY); // fallback to mock data
-      })
-      .catch(() => setHistory(MOCK_HISTORY)); // also fallback on error
+      .then(data => { if (data?.length) setHistory(data); })
+      .catch(() => {}); // fall back to mock
   }, []);
 
   // ── Derived stats ─────────────────────────────────────────────────────────
@@ -278,7 +275,7 @@ export default function HistoryView() {
             </div>
           </div>
 
-          <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+          <div style={{ overflowY: "auto", flex: 1 }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
@@ -389,7 +386,6 @@ const styles: Record<string, React.CSSProperties> = {
   root: {
     display: "flex",
     flexDirection: "column",
-    width: "100%",
     height: "100%",
     background: "#080a0d",
     overflow: "hidden",
@@ -423,7 +419,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 0,
     borderBottom: "1px solid #1e2a35",
     background: "#0d1117",
-    height: 180
+    flexShrink: 0,
   },
   chartCard: {
     padding: "14px 16px",
