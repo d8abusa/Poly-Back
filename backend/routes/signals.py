@@ -7,9 +7,18 @@ from ..models.schemas import SignalApproveRequest, SignalModifyRequest
 from ..services import signal_queue as sq
 from ..services import alert_service as alerts
 from ..services import position_tracker as pt
+from ..services.exchange_router import get_exchange_client
+from ..services.crypto_scanner import _pending_for as _crypto_pending
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/signals", tags=["signals"])
+
+# Coinbase spot product suffixes — used to route signals to Coinbase
+_COINBASE_SUFFIXES = ("-USD", "-USDC", "-USDT", "-EUR", "-GBP")
+
+
+def _is_coinbase_signal(market_id: str) -> bool:
+    return any(market_id.upper().endswith(s) for s in _COINBASE_SUFFIXES)
 
 
 @router.get("")
@@ -52,6 +61,48 @@ async def approve_signal(
     sig = sq.approve_signal(signal_id, modified_size=body.modified_size)
     if sig is None:
         raise HTTPException(status_code=404, detail="Signal not found or not pending")
+
+    # ── Coinbase crypto signal → place real order ──────────────────────────
+    if _is_coinbase_signal(sig.market_id):
+        client = get_exchange_client("coinbase")
+        if client is None:
+            raise HTTPException(status_code=503, detail="Coinbase client not configured")
+
+        size_usd = float(body.modified_size or sig.suggested_size)
+        shares   = size_usd / sig.entry_price  # fractional crypto
+
+        try:
+            order = await client.place_order(
+                product_id=sig.market_id,
+                side=sig.side,               # "BUY" or "SELL"
+                size=shares,                 # base_size (crypto units)
+                limit_price=sig.entry_price if sig.execution_mode.value == "confirm" else None,
+            )
+        except Exception as exc:
+            log.error("Coinbase order failed for signal %s: %s", signal_id, exc)
+            raise HTTPException(status_code=502, detail=f"Coinbase order failed: {exc}")
+
+        # Clear crypto scanner pending flag so it can signal again
+        _crypto_pending.discard(sig.market_id)
+
+        # Record as a position in tracker (adapts to crypto scale)
+        pos = pt.open_position(sig)
+        log.info(
+            "Coinbase order placed: %s %s %.8f @ %.4f  order_id=%s  pos=%s",
+            sig.market_id, sig.side, shares, sig.entry_price,
+            order.get("order_id", "?"), pos["id"],
+        )
+        return {
+            "status":     "approved",
+            "exchange":   "coinbase",
+            "signal":     sig,
+            "position_id": pos["id"],
+            "order":      order,
+            "shares":     round(shares, 8),
+            "size_usd":   size_usd,
+        }
+
+    # ── Prediction market signal → existing flow ───────────────────────────
     pos = pt.open_position(sig)
     log.info("Approved signal %s  size=%d  position=%s", signal_id, sig.suggested_size, pos["id"])
     return {"status": "approved", "signal": sig, "position_id": pos["id"]}

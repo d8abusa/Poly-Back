@@ -34,6 +34,18 @@ def send_alert(signal: SignalSchema, error: Optional[str] = None) -> dict:
     return alert
 
 
+def send_alert_dict(data: dict) -> dict:
+    """Send a free-form alert (used by stop-loss executor and other system events)."""
+    alert = {
+        "id":         str(uuid.uuid4()),
+        "read":       False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        **data,
+    }
+    _alerts.append(alert)
+    return alert
+
+
 def get_alerts() -> list[dict]:
     return list(reversed(_alerts))
 

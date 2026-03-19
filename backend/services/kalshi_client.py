@@ -2,18 +2,31 @@
 Kalshi exchange client — wraps the Kalshi v2 Trading API.
 Kalshi is a CFTC-regulated US prediction market exchange.
 
-Public endpoints require no authentication.
-Authenticated endpoints (order placement) require API key + password.
+Public endpoints: no authentication required.
+Authenticated endpoints (order placement): RSA-PSS signed headers.
+
+Auth headers for private endpoints:
+    KALSHI-ACCESS-KEY       — API key UUID
+    KALSHI-ACCESS-TIMESTAMP — epoch milliseconds (string)
+    KALSHI-ACCESS-SIGNATURE — base64(RSA-PSS-SHA256(key, ts + METHOD + path))
+
+Required env vars:
+    KALSHI_API_KEY      — UUID API key
+    KALSHI_PRIVATE_KEY  — PEM RSA private key (literal \\n newlines)
 
 API base: https://api.elections.kalshi.com/trade-api/v2
 Docs:     https://trading-api.kalshi.com/docs
 """
 
+import base64
 import logging
 import time as _time
+import uuid
 from typing import Optional
 
 import httpx
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 from .base_client import BaseExchangeClient
 
@@ -65,13 +78,61 @@ def _series_from_ticker(ticker: str) -> str:
     return ticker.split("-")[0]
 
 
+def _build_kalshi_signature(
+    method: str,
+    path: str,
+    timestamp_ms: int,
+    private_key_pem: str,
+) -> str:
+    """
+    Sign the canonical message for Kalshi API auth.
+    Message = str(timestamp_ms) + METHOD_UPPER + path
+    Algorithm: RSA-PSS, SHA-256, MGF1-SHA256, salt=digest length
+    """
+    pem_bytes = private_key_pem.replace("\\n", "\n").encode()
+    private_key = serialization.load_pem_private_key(pem_bytes, password=None)
+    message = f"{timestamp_ms}{method.upper()}{path}".encode("utf-8")
+    signature = private_key.sign(
+        message,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.DIGEST_LENGTH,
+        ),
+        hashes.SHA256(),
+    )
+    return base64.b64encode(signature).decode("utf-8")
+
+
 class KalshiClient(BaseExchangeClient):
-    def __init__(self, api_key: Optional[str] = None, api_password: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        api_password: Optional[str] = None,
+        private_key: Optional[str] = None,
+    ):
         headers = {"User-Agent": "PolyBack/1.0", "Accept": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        self._client = httpx.AsyncClient(timeout=30.0, headers=headers)
-        self._api_key = api_key
+        self._client      = httpx.AsyncClient(timeout=30.0, headers=headers)
+        self._api_key     = api_key
+        self._private_key = private_key  # PEM string with literal \n
+
+    def _auth_headers(self, method: str, path: str) -> dict:
+        """Build RSA-PSS signed headers for authenticated Kalshi endpoints."""
+        if not self._api_key or not self._private_key:
+            log.warning("Kalshi auth headers requested but credentials missing")
+            return {}
+        ts = int(_time.time() * 1000)
+        try:
+            sig = _build_kalshi_signature(method, path, ts, self._private_key)
+        except Exception as exc:
+            log.error("Kalshi signature build failed: %s", exc)
+            return {}
+        return {
+            "KALSHI-ACCESS-KEY":       self._api_key,
+            "KALSHI-ACCESS-TIMESTAMP": str(ts),
+            "KALSHI-ACCESS-SIGNATURE": sig,
+        }
 
     # ── Market listing ───────────────────────────────────────────────────────
 
@@ -82,11 +143,30 @@ class KalshiClient(BaseExchangeClient):
         status: str = "open",
         **kwargs,
     ) -> list[dict]:
-        params: dict = {"limit": min(limit + offset, 200), "status": status}
-        resp = await self._client.get(f"{KALSHI_BASE}/markets", params=params)
+        """
+        Fetch real prediction markets via the /events endpoint with nested markets.
+        The /markets endpoint returns parlay (KXMVE) markets only — useless for
+        prediction market research. Real single-outcome markets live under /events.
+        """
+        params: dict = {
+            "limit": min(limit + offset, 200),
+            "status": status,
+            "with_nested_markets": "true",
+        }
+        resp = await self._client.get(f"{KALSHI_BASE}/events", params=params)
         resp.raise_for_status()
-        markets = resp.json().get("markets", [])
-        return markets[offset:offset + limit]
+        events = resp.json().get("events", [])
+
+        # Flatten event → markets, attach event-level fields to each market
+        flat: list[dict] = []
+        for event in events:
+            for market in event.get("markets", []):
+                market.setdefault("category", event.get("category", ""))
+                flat.append(market)
+
+        # Sort by volume descending so callers get the most active first
+        flat.sort(key=lambda m: float(m.get("volume_fp", 0) or 0), reverse=True)
+        return flat[offset:offset + limit]
 
     def normalize_market(self, raw: dict) -> dict:
         ticker = raw.get("ticker", "")
@@ -211,6 +291,79 @@ class KalshiClient(BaseExchangeClient):
         except Exception:
             return None
 
+    # ── Order placement ───────────────────────────────────────────────────────
+
+    async def place_order(
+        self,
+        ticker: str,
+        side: str,              # "yes" or "no"
+        action: str,            # "buy" or "sell"
+        count: int,             # number of contracts
+        yes_price: int,         # limit price in cents (1–99); 0 for market
+        order_type: str = "limit",
+        client_order_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Place a limit or market order on Kalshi.
+
+        Kalshi order body:
+            ticker, action (buy/sell), side (yes/no), type (limit/market),
+            count (contracts), yes_price (cents, only for limit orders)
+        """
+        path = "/portfolio/orders"
+        auth = self._auth_headers("POST", path)
+        if not auth:
+            return {"order_id": "", "status": "error", "note": "Kalshi credentials not configured"}
+
+        body: dict = {
+            "ticker":          ticker,
+            "action":          action.lower(),
+            "side":            side.lower(),
+            "type":            order_type,
+            "count":           count,
+            "client_order_id": client_order_id or uuid.uuid4().hex,
+        }
+        if order_type == "limit":
+            body["yes_price"] = yes_price
+
+        try:
+            resp = await self._client.post(
+                f"{KALSHI_BASE}{path}",
+                headers=auth,
+                json=body,
+            )
+            resp.raise_for_status()
+            data  = resp.json()
+            order = data.get("order", data)
+            return {
+                "order_id": order.get("order_id", body["client_order_id"]),
+                "status":   "submitted",
+                "note":     f"Kalshi order: {ticker} {action} {side} {count}ct @ {yes_price}¢",
+            }
+        except httpx.HTTPStatusError as exc:
+            log.error(
+                "Kalshi order failed %s: %s — %s",
+                ticker, exc.response.status_code, exc.response.text,
+            )
+            return {
+                "order_id": body["client_order_id"],
+                "status":   "error",
+                "note":     exc.response.text,
+            }
+
+    async def cancel_order(self, order_id: str) -> dict:
+        path = f"/portfolio/orders/{order_id}"
+        auth = self._auth_headers("DELETE", path)
+        if not auth:
+            return {"order_id": order_id, "status": "error", "note": "Kalshi credentials not configured"}
+        try:
+            resp = await self._client.delete(f"{KALSHI_BASE}{path}", headers=auth)
+            resp.raise_for_status()
+            return {"status": "cancelled", "order_id": order_id}
+        except httpx.HTTPStatusError as exc:
+            log.error("Kalshi cancel failed %s: %s — %s", order_id, exc.response.status_code, exc.response.text)
+            return {"order_id": order_id, "status": "error", "note": exc.response.text}
+
     async def close(self):
         await self._client.aclose()
 
@@ -226,5 +379,6 @@ def get_kalshi_client() -> KalshiClient:
         from ..config import settings
         _kalshi_client = KalshiClient(
             api_key=getattr(settings, "kalshi_api_key", None),
+            private_key=getattr(settings, "kalshi_private_key", None),
         )
     return _kalshi_client

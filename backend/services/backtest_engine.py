@@ -80,6 +80,9 @@ class PredictionMarketBacktester:
         # Z-Score Reversion: rolling window of probabilities
         self._zscore_window: deque = deque(maxlen=request.zscore_window if hasattr(request, "zscore_window") else 20)
 
+        # Mean Reversion: separate rolling window using its own lookback_window param
+        self._mr_window: deque = deque(maxlen=getattr(request, "lookback_window", 15))
+
         # Kelly: tracks consecutive wins/losses for fractional sizing
         self._kelly_last_pnls: deque = deque(maxlen=20)
 
@@ -111,8 +114,10 @@ class PredictionMarketBacktester:
                 self._threshold(prob, date)
             elif self.req.strategy == "momentum":
                 self._momentum(prob, date)
-            elif self.req.strategy == "zscore_reversion":
+            elif self.req.strategy in ("zscore_reversion", "zscore"):
                 self._zscore_reversion(prob, date)
+            elif self.req.strategy == "mean_reversion":
+                self._mean_reversion(prob, date)
             elif self.req.strategy == "kelly":
                 self._kelly(prob, date)
             elif self.req.strategy == "market_making":
@@ -226,6 +231,48 @@ class PredictionMarketBacktester:
             elif z < -stop_z:
                 # Dislocation deepening past stop — cut loss
                 self._sell(prob, date, forced=True, note=f"z={z:.2f} stop")
+            elif stop is not None and prob <= stop:
+                self._sell(prob, date, forced=True, note="prob stop-loss")
+
+    def _mean_reversion(self, prob: float, date: str):
+        """
+        Mean Reversion.
+
+        Theory: probabilities oscillate around a rolling mean in stationary markets.
+        Fade deviations beyond a threshold standard deviations from the mean.
+
+        Logic:
+          - Maintain a rolling window of recent probabilities (lookback_window ticks).
+          - Compute deviation = (prob - mean) / std.
+          - BUY  when deviation < -reversion_threshold (prob below mean by k std devs).
+          - SELL when prob reverts to rolling mean (deviation >= 0).
+
+        Parameters on BacktestRequest (with defaults):
+          lookback_window      int   15    rolling window length
+          reversion_threshold  float 2.0   std devs from mean to trigger entry
+        """
+        self._mr_window.append(prob)
+
+        if len(self._mr_window) < self._mr_window.maxlen:
+            return
+
+        arr  = np.array(self._mr_window)
+        mean = arr.mean()
+        std  = arr.std()
+
+        if std < 1e-6:
+            return
+
+        deviation = (prob - mean) / std
+        threshold = getattr(self.req, "reversion_threshold", 2.0)
+        stop      = self.req.stop_loss
+
+        if self.position == 0 and self.cash > 0:
+            if deviation < -threshold:
+                self._buy(prob, date, note=f"dev={deviation:.2f}")
+        elif self.position > 0:
+            if deviation >= 0.0:
+                self._sell(prob, date, note=f"dev={deviation:.2f} reverted")
             elif stop is not None and prob <= stop:
                 self._sell(prob, date, forced=True, note="prob stop-loss")
 

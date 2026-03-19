@@ -1,9 +1,7 @@
 """
-In-memory position store.
+Position store — backed by SQLite with an in-memory cache.
 
-Positions are opened when a signal is approved (CONFIRM mode) or
-auto-executed (AUTO mode). They remain open until manually closed
-or a stop-loss / exit-target is hit by the live execution layer.
+Same public API as before; state now survives backend restarts.
 """
 
 import uuid
@@ -11,13 +9,35 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..models.schemas import SignalSchema
+from .db import get_conn, row_to_dict
 
+
+# ── In-memory cache (populated on first access) ───────────────────────────────
 
 _open:   dict[str, dict] = {}
 _closed: list[dict]      = []
+_loaded  = False
 
+
+def _ensure_loaded() -> None:
+    global _loaded
+    if _loaded:
+        return
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM positions ORDER BY entry_date ASC").fetchall()
+    for row in rows:
+        d = row_to_dict(row)
+        if d["status"] == "open":
+            _open[d["id"]] = d
+        else:
+            _closed.append(d)
+    _loaded = True
+
+
+# ── Mutations ─────────────────────────────────────────────────────────────────
 
 def open_position(signal: SignalSchema, category: str = "Other") -> dict:
+    _ensure_loaded()
     pos = {
         "id":           str(uuid.uuid4()),
         "signal_id":    signal.id,
@@ -39,29 +59,46 @@ def open_position(signal: SignalSchema, category: str = "Other") -> dict:
         "close_reason": None,
         "realized_pnl": None,
     }
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO positions
+                (id, signal_id, market_id, market_title, category, strategy, side,
+                 entry_price, current_prob, exit_target, stop_loss, shares, capital,
+                 status, entry_date, closed_at, exit_prob, close_reason, realized_pnl)
+            VALUES
+                (:id, :signal_id, :market_id, :market_title, :category, :strategy, :side,
+                 :entry_price, :current_prob, :exit_target, :stop_loss, :shares, :capital,
+                 :status, :entry_date, :closed_at, :exit_prob, :close_reason, :realized_pnl)
+        """, pos)
     _open[pos["id"]] = pos
     return pos
 
 
 def get_open() -> list[dict]:
+    _ensure_loaded()
     return list(_open.values())
 
 
 def get_closed() -> list[dict]:
+    _ensure_loaded()
     return list(reversed(_closed))
 
 
 def update_prob(position_id: str, prob: float) -> Optional[dict]:
+    _ensure_loaded()
     pos = _open.get(position_id)
     if pos is not None:
         pos["current_prob"] = max(0.01, min(0.99, prob))
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE positions SET current_prob=? WHERE id=?",
+                (pos["current_prob"], position_id),
+            )
     return pos
 
 
-def close_position(
-    position_id: str,
-    close_reason: str = "manual",
-) -> Optional[dict]:
+def close_position(position_id: str, close_reason: str = "manual") -> Optional[dict]:
+    _ensure_loaded()
     pos = _open.pop(position_id, None)
     if pos is None:
         return None
@@ -75,11 +112,19 @@ def close_position(
     pos["exit_prob"]    = round(exit_prob, 4)
     pos["close_reason"] = close_reason
     pos["realized_pnl"] = round(pnl, 4)
+    with get_conn() as conn:
+        conn.execute("""
+            UPDATE positions
+            SET status=:status, closed_at=:closed_at, exit_prob=:exit_prob,
+                close_reason=:close_reason, realized_pnl=:realized_pnl
+            WHERE id=:id
+        """, pos)
     _closed.append(pos)
     return pos
 
 
 def get_summary() -> dict:
+    _ensure_loaded()
     open_list = list(_open.values())
 
     def _pnl(p: dict) -> float:
@@ -87,9 +132,9 @@ def get_summary() -> dict:
             return (p["current_prob"] - p["entry_price"]) * p["shares"]
         return (p["entry_price"] - p["current_prob"]) * p["shares"]
 
-    pnl_values        = [_pnl(p) for p in open_list]
-    unrealized        = sum(pnl_values)
-    capital_deployed  = sum(p["capital"] for p in open_list)
+    pnl_values       = [_pnl(p) for p in open_list]
+    unrealized       = sum(pnl_values)
+    capital_deployed = sum(p["capital"] for p in open_list)
 
     today = datetime.now(timezone.utc).date().isoformat()
     today_realized = sum(
@@ -101,9 +146,8 @@ def get_summary() -> dict:
     closed_pnl   = [p["realized_pnl"] for p in _closed if p["realized_pnl"] is not None]
     win_rate     = (len([v for v in closed_pnl if v > 0]) / len(closed_pnl) * 100) if closed_pnl else 0.0
     max_drawdown = min(pnl_values) if pnl_values else 0.0
-
-    profitable = sum(1 for v in pnl_values if v >= 0)
-    at_risk    = len(pnl_values) - profitable
+    profitable   = sum(1 for v in pnl_values if v >= 0)
+    at_risk      = len(pnl_values) - profitable
 
     return {
         "total_unrealized_pnl": round(unrealized, 2),

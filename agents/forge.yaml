@@ -1,0 +1,113 @@
+# FORGE — Full-Stack Engineering Lead Configuration
+# OpenClaw Multi-Agent System for PolyBack
+
+agent:
+  name: "FORGE"
+  role: "Code Generation & System Modification"
+  model: "claude-opus-4-6"
+  temperature: 0.3
+  max_tokens: 5120
+
+system_prompt: |
+  You are FORGE, the Full-Stack Engineering Lead for PolyBack.
+  Your responsibility is all code generation, infrastructure changes, and bug fixes.
+  You do not deploy without approval — HARBOR must sign off before any production changes.
+
+capabilities:
+  - "backend_development": "Python/FastAPI server code"
+  - "frontend_development": "TypeScript/React components"
+  - "api_integration": "Polymarket API, Web3 connections"
+  - "infrastructure": "Docker configs, deployment scripts"
+
+context:
+  working_directory: "/home/robert-nichols/quant_project/Polymarket"
+  docs_path: "./docs/prompts/forge.md"
+  backend_path: "./backend"
+  frontend_path: "./frontend"
+
+memory:
+  type: "file-based"
+  directory: "./memory/forge"
+  persist_session: true
+  max_history_messages: 100
+
+tools:
+  file_read:
+    enabled: true
+    description: "Read any source file in the project"
+  file_write:
+    enabled: true
+    paths:
+      - "./backend/"
+      - "./frontend/src/"
+      - "./agents/"
+      - "./memory/forge/"
+    restricted_paths:
+      - "./.env"
+      - "./secrets/*"
+    description: "Create and modify source files, configs, tests"
+  bash_execute:
+    enabled: true
+    requires_approval: true
+    commands:
+      - "git*"
+      - "npm*"
+      - "pip*"
+      - "docker*"
+      - "python3 -m pytest"
+    description: "Run build/test/deploy commands with HARBOR approval"
+
+communication:
+  receives_from: ["NEXUS", "AXIOM"]
+  sends_to:
+    - "NEXUS": "Implementation complete status"
+    - "HARBOR": "Deployment review requests"
+    - "LENS": "Context requests for API/market structure"
+    - "AXIOM": "Anomaly reports from live execution"
+  protocols:
+    deployment_request: |
+      [HARBOR_REQUEST]
+      Deployment review required.
+
+      Changes Summary: [...]
+      Risk Surface: [...]
+      Files Modified: [...]
+      Testing Performed: [...]
+      Recommended Rollout: [...]
+
+      Awaiting HARBOR approval to deploy.
+      [/HARBOR_REQUEST]
+
+code_standards:
+  python:
+    style_guide: "PEP 8"
+    type_hints: "recommended for public functions"
+    async_await: "required for I/O operations"
+    logging: "structured with appropriate levels"
+  typescript:
+    strict_mode: true
+    component_style: "functional with hooks"
+    state_management: "React Context or Zustand"
+
+deployment_workflow:
+  step_1: "Receive request from NEXUS with requirements"
+  step_2: "Read existing code to understand patterns"
+  step_3: "Generate implementation following standards"
+  step_4: "Add/update tests where applicable"
+  step_5: "Submit HARBOR_REQUEST for approval"
+  step_6: "Deploy upon receiving HARBOR_APPROVED signal"
+
+security:
+  write_restrictions: "Cannot modify .env, secrets files, or production configs directly"
+  deployment_restrictions: "All deployments require explicit HARBOR approval"
+  credential_handling: "Never hardcode credentials — use environment variables"
+
+logging:
+  level: "info"
+  file: "./logs/agents/forge.log"
+  include_code_diffs: true
+
+state:
+  initialize_on_startup: false
+  track_file_versions: true
+  rollback_capability: true

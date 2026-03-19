@@ -1,11 +1,17 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from ..services import position_tracker as pt
+from ..services import risk_manager as risk
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/positions", tags=["positions"])
+
+
+class ResumeRequest(BaseModel):
+    override_reason: str
 
 
 @router.get("")
@@ -58,3 +64,27 @@ async def update_prob(position_id: str, prob: float):
     if pos is None:
         raise HTTPException(status_code=404, detail="Position not found")
     return {"status": "updated", "position": pos}
+
+
+# ── Risk management endpoints ─────────────────────────────────────────────────
+
+@router.get("/risk/status")
+async def get_risk_status():
+    """Current risk state: halt status, capital at risk, drawdown, limits."""
+    return risk.get_status()
+
+
+@router.post("/risk/kill")
+async def kill_switch(reason: str = Query(default="manual_kill_switch")):
+    """
+    Hard kill switch — flattens all open positions and halts the system.
+    Use in emergencies. Requires manual resume to restart trading.
+    """
+    log.critical("KILL SWITCH activated via API. Reason: %s", reason)
+    return await risk.flatten_all_and_halt(reason=reason)
+
+
+@router.post("/risk/resume")
+async def resume_trading(body: ResumeRequest):
+    """Resume trading after a halt. Requires an explicit override reason."""
+    return risk.resume_trading(override_reason=body.override_reason)

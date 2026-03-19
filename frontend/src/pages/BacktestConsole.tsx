@@ -44,7 +44,7 @@ export default function BacktestConsole() {
   const [historyRuns, setHistoryRuns] = useState<HistoryRun[]>([]);
 
   // ── Exchange ──────────────────────────────────────────────────────────────────
-  const [exchange,     setExchange]     = useState<ExchangeId>("polymarket");
+  const [exchange,     setExchange]     = useState<ExchangeId>("kalshi");
   const [showSettings, setShowSettings] = useState(false);
 
   // ── Execution mode + view ─────────────────────────────────────────────────────
@@ -192,9 +192,9 @@ export default function BacktestConsole() {
 
           {/* Exchange selector */}
           <div style={{ display: "flex", gap: 2, marginLeft: 8 }}>
-            {(["polymarket", "kalshi", "manifold"] as const).map(ex => {
-              const labels: Record<string, string> = { polymarket: "Polymarket", kalshi: "Kalshi", manifold: "Manifold" };
-              const colors: Record<string, string> = { polymarket: "#00d4a8", kalshi: "#3b82f6", manifold: "#f59e0b" };
+            {(["kalshi", "manifold", "coinbase"] as const).map(ex => {
+              const labels: Record<string, string> = { kalshi: "Kalshi", manifold: "Manifold", coinbase: "Coinbase" };
+              const colors: Record<string, string> = { kalshi: "#3b82f6", manifold: "#f59e0b", coinbase: "#0052ff" };
               const active = exchange === ex;
               return (
                 <button
@@ -334,7 +334,7 @@ export default function BacktestConsole() {
           </div>
         ) : (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
-            <LiveFeed markets={markets} />
+            <LiveFeed markets={markets} exchange={exchange} />
           </div>
         )}
 

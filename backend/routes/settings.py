@@ -100,17 +100,37 @@ def _polymarket_status(env: dict) -> dict:
 
 
 def _kalshi_status(env: dict) -> dict:
-    has_creds = bool(env.get("KALSHI_API_KEY") and env.get("KALSHI_API_PASSWORD"))
+    has_api_key     = bool(env.get("KALSHI_API_KEY"))
+    has_private_key = bool(env.get("KALSHI_PRIVATE_KEY"))
+    full = has_api_key and has_private_key
     return {
-        "auth_level": "api" if has_creds else "public",
+        "auth_level": "full" if full else "api" if has_api_key else "public",
         "capabilities": {
             "read_public":  True,
-            "read_private": has_creds,
-            "place_orders": has_creds,
+            "read_private": has_api_key,
+            "place_orders": full,
         },
         "fields": {
             "KALSHI_API_KEY":      _masked(env.get("KALSHI_API_KEY")),
-            "KALSHI_API_PASSWORD": _masked(env.get("KALSHI_API_PASSWORD")),
+            "KALSHI_PRIVATE_KEY":  _masked(env.get("KALSHI_PRIVATE_KEY")),
+        },
+    }
+
+
+def _coinbase_status(env: dict) -> dict:
+    has_key_name    = bool(env.get("COINBASE_KEY_NAME"))
+    has_private_key = bool(env.get("COINBASE_PRIVATE_KEY"))
+    full = has_key_name and has_private_key
+    return {
+        "auth_level": "full" if full else "public",
+        "capabilities": {
+            "read_public":  True,
+            "read_private": full,
+            "place_orders": full,
+        },
+        "fields": {
+            "COINBASE_KEY_NAME":    _masked(env.get("COINBASE_KEY_NAME")),
+            "COINBASE_PRIVATE_KEY": _masked(env.get("COINBASE_PRIVATE_KEY")),
         },
     }
 
@@ -135,10 +155,48 @@ async def get_settings():
     """Return masked credential status for all exchanges."""
     env = _read_env()
     return {
-        "polymarket": _polymarket_status(env),
+        "coinbase":   _coinbase_status(env),
         "kalshi":     _kalshi_status(env),
         "manifold":   _manifold_status(env),
+        "polymarket": _polymarket_status(env),
     }
+
+
+class CoinbaseCredsRequest(BaseModel):
+    key_name:    Optional[str] = None
+    private_key: Optional[str] = None
+
+
+@router.post("/coinbase")
+async def update_coinbase_creds(body: CoinbaseCredsRequest):
+    """Update Coinbase credentials in .env."""
+    updates: dict[str, str] = {}
+    if body.key_name    is not None: updates["COINBASE_KEY_NAME"]    = body.key_name
+    if body.private_key is not None: updates["COINBASE_PRIVATE_KEY"] = body.private_key
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided")
+
+    try:
+        _write_env(updates)
+        from ..config import settings
+        if body.key_name:    settings.coinbase_key_name    = body.key_name
+        if body.private_key: settings.coinbase_private_key = body.private_key
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write credentials: {e}")
+
+    env = _read_env()
+    return {"ok": True, "status": _coinbase_status(env)}
+
+
+@router.delete("/coinbase/{field}")
+async def clear_coinbase_field(field: str):
+    allowed = {"COINBASE_KEY_NAME", "COINBASE_PRIVATE_KEY"}
+    if field not in allowed:
+        raise HTTPException(status_code=400, detail=f"Unknown field: {field}")
+    _write_env({field: ""})
+    env = _read_env()
+    return {"ok": True, "status": _coinbase_status(env)}
 
 
 class PolymarketCredsRequest(BaseModel):
@@ -178,6 +236,7 @@ async def update_polymarket_creds(body: PolymarketCredsRequest):
 class KalshiCredsRequest(BaseModel):
     api_key:      Optional[str] = None
     api_password: Optional[str] = None
+    private_key:  Optional[str] = None
 
 
 @router.post("/kalshi")
@@ -186,6 +245,7 @@ async def update_kalshi_creds(body: KalshiCredsRequest):
     updates: dict[str, str] = {}
     if body.api_key      is not None: updates["KALSHI_API_KEY"]      = body.api_key
     if body.api_password is not None: updates["KALSHI_API_PASSWORD"] = body.api_password
+    if body.private_key  is not None: updates["KALSHI_PRIVATE_KEY"]  = body.private_key
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided")
@@ -195,6 +255,7 @@ async def update_kalshi_creds(body: KalshiCredsRequest):
         from ..config import settings
         if body.api_key:      settings.kalshi_api_key      = body.api_key
         if body.api_password: settings.kalshi_api_password = body.api_password
+        if body.private_key:  settings.kalshi_private_key  = body.private_key
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write credentials: {e}")
 
@@ -215,7 +276,7 @@ async def clear_polymarket_field(field: str):
 
 @router.delete("/kalshi/{field}")
 async def clear_kalshi_field(field: str):
-    allowed = {"KALSHI_API_KEY", "KALSHI_API_PASSWORD"}
+    allowed = {"KALSHI_API_KEY", "KALSHI_API_PASSWORD", "KALSHI_PRIVATE_KEY"}
     if field not in allowed:
         raise HTTPException(status_code=400, detail=f"Unknown field: {field}")
     _write_env({field: ""})

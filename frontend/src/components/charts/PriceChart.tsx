@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useId } from "react";
 import type { Market, HistoryPoint } from "../../types";
 import { genCurve } from "../../utils";
 
@@ -18,6 +18,7 @@ export default function PriceChart({ market, history }: PriceChartProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const uid = useId().replace(/:/g, "");  // unique per instance — prevents gradient ID collision
 
   const hasReal = history !== null && history.length >= 2;
   const curve = hasReal ? history.map(h => h.p) : genCurve(market.id, market.prob);
@@ -70,11 +71,11 @@ export default function PriceChart({ market, history }: PriceChartProps) {
       onMouseMove={handleMouseMove} onMouseLeave={() => setTooltip(null)}>
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "100%", display: "block" }}>
         <defs>
-          <linearGradient id="probGrad" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={`probGrad_${uid}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#00d4a8" stopOpacity="0.28" />
             <stop offset="100%" stopColor="#00d4a8" stopOpacity="0" />
           </linearGradient>
-          <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
+          <linearGradient id={`lineGrad_${uid}`} x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="#00d4a8" stopOpacity="0.5" />
             <stop offset="100%" stopColor="#00d4a8" stopOpacity="1" />
           </linearGradient>
@@ -105,8 +106,8 @@ export default function PriceChart({ market, history }: PriceChartProps) {
           );
         })}
 
-        <path d={area} fill="url(#probGrad)" />
-        <path d={d} fill="none" stroke="url(#lineGrad)" strokeWidth="2" strokeLinecap="round" />
+        <path d={area} fill={`url(#probGrad_${uid})`} />
+        <path d={d} fill="none" stroke={`url(#lineGrad_${uid})`} strokeWidth="2" strokeLinecap="round" />
 
         {/* Trade markers — decorative until real backtest results are wired */}
         {[18, 34, 52, 68, 78, 88].map((pct, i) => {

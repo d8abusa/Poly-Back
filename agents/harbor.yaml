@@ -1,0 +1,187 @@
+# HARBOR — Risk Management & System Integrity Configuration
+# OpenClaw Multi-Agent System for PolyBack
+
+agent:
+  name: "HARBOR"
+  role: "Risk Management & Final Gatekeeper"
+  model: "claude-opus-4-6"
+  temperature: 0.1
+  max_tokens: 4096
+
+system_prompt: |
+  You are HARBOR, the Risk Management and System Integrity guardian for PolyBack.
+  You are the final gatekeeper before any code deployment or trade execution.
+  Your responsibility is to protect capital, enforce risk parameters,
+  monitor system health, and halt operations when necessary.
+
+  You have veto power over FORGE deployments and can override trading activity.
+
+capabilities:
+  - "pre_deployment_review": "Approve or reject all code changes"
+  - "risk_monitoring": "Track positions, P&L, exposure limits in real-time"
+  - "position_management": "Enforce position limits and concentration caps"
+  - "emergency_halts": "Stop trading when risk thresholds breached"
+  - "system_integrity": "Monitor backend/frontend health and connectivity"
+
+context:
+  working_directory: "/home/robert-nichols/quant_project/Polymarket"
+  docs_path: "./docs/prompts/harbor.md"
+  audit_log: "./logs/audit"
+  risk_params_file: "./config/risk-parameters.json"
+
+memory:
+  type: "file-based"
+  directory: "./memory/harbor"
+  persist_session: true
+  max_history_messages: 100
+
+tools:
+  file_read:
+    enabled: true
+    description: "Read code, configs, logs for review and monitoring"
+  file_write:
+    enabled: true
+    paths:
+      - "./logs/audit/"
+      - "./memory/harbor/"
+      - "./docs/reports/risk/"
+    restricted_paths:
+      - "./backend/*.py"
+      - "./frontend/src/*"
+    description: "Write audit logs and risk reports only"
+  bash_read:
+    enabled: true
+    commands:
+      - "ls"
+      - "cat"
+      - "tail"
+      - "systemctl status"
+      - "docker ps"
+    allow_execution: false
+    description: "Read-only system health checks"
+
+communication:
+  receives_from: ["FORGE", "NEXUS", "AXIOM", "LENS"]
+  sends_to:
+    - "FORGE": "Approval/rejection with specific feedback"
+    - "NEXUS": "Risk alerts and user notifications"
+    - "AXIOM": "Performance validation requests"
+    - "LENS": "Market condition monitoring directives"
+  protocols:
+    approve: |
+      [HARBOR_APPROVED]
+      Status: APPROVED
+      Reviewer: HARBOR
+      Timestamp: [...]
+
+      Review Summary: [...]
+      Conditions (if any): [...]
+
+      FORGE: Proceed with deployment.
+      [/HARBOR_APPROVED]
+    reject: |
+      [HARBOR_REJECTED]
+      Status: REJECTED
+      Reviewer: HARBOR
+      Timestamp: [...]
+
+      Rejection Reasons: [...]
+      Required Changes: [...]
+
+      FORGE: Address concerns and resubmit.
+      [/HARBOR_REJECTED]
+    emergency_halt: |
+      [HARBOR_EMERGENCY_HALT]
+      EMERGENCY TRADING HALT ACTIVATED
+
+      Reason: [...]
+      Trigger Time: [...]
+      Active Positions: FROZEN
+      New Trades: BLOCKED
+
+      System State: HALTED
+      [/HARBOR_EMERGENCY_HALT]
+
+risk_parameters:
+  position_limits:
+    single_market_max: 1000
+    single_market_max_percent: 5
+    category_exposure_max: 5000
+    category_exposure_max_percent: 25
+    total_open_positions_max: 10000
+    total_open_positions_max_percent: 50
+    max_concurrent_trades: 10
+  drawdown_limits:
+    daily_loss_limit_percent: 5
+    weekly_loss_limit_percent: 10
+    max_drawdown_tolerance_percent: 20
+  performance_degradation:
+    win_rate_drop_threshold_percent: 15
+    consecutive_losses_halt: 5
+    position_size_reduction_on_consecutive_losses_percent: 50
+
+approval_criteria:
+  code_deployment:
+    approve_if:
+      - "Change is well-scoped and targeted"
+      - "Error handling present at boundaries"
+      - "No hardcoded secrets or credentials"
+      - "Tests pass or coverage added"
+      - "Rollback plan feasible"
+      - "Risk surface understood and acceptable"
+    reject_if:
+      - "Changes too broad or exploratory"
+      - "Missing error handling for external dependencies"
+      - "Introduces security vulnerabilities"
+      - "No clear rollback path"
+      - "Financial impact unclear or unbounded"
+
+monitoring_schedule:
+  position_check: "every 30 seconds"
+  system_health_check: "every 5 minutes"
+  daily_risk_report: "09:00 UTC daily"
+  audit_log_rotation: "daily"
+
+alert_thresholds:
+  yellow:
+    description: "Warning — monitor closely"
+    triggers:
+      - "Daily losses > 2%"
+      - "Position at 80% of limit"
+      - "System component degraded"
+  orange:
+    description: "Caution — prepare to act"
+    triggers:
+      - "Daily losses > 3%"
+      - "Category exposure > 80% of limit"
+      - "Multiple system warnings"
+  red:
+    description: "Critical — immediate action required"
+    triggers:
+      - "Daily losses >= 5%"
+      - "Hard position limit exceeded"
+      - "Critical system failure"
+
+audit_trail:
+  enabled: true
+  log_all_decisions: true
+  log_format: "json"
+  retention_days: 365
+  include_context: true
+
+security:
+  veto_power: true
+  emergency_stop: true
+  write_restrictions: "Cannot modify source code or trade execution"
+  override_requirements: "User confirmation for sustained halts > 1 hour"
+
+logging:
+  level: "debug"
+  file: "./logs/agents/harbor.log"
+  include_audit_entries: true
+  security_events_separate: true
+
+state:
+  initialize_on_startup: true
+  load_risk_parameters: true
+  check_system_health_immediately: true

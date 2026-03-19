@@ -22,6 +22,15 @@ export default function ConfirmationCard({
   const sideColor = isExit ? "#ef4444" : "#22c55e";
   const borderColor = isExit ? "rgba(239,68,68,0.2)" : "rgba(0,212,168,0.15)";
 
+  const CRYPTO_SUFFIXES = ["-USD", "-USDC", "-USDT", "-EUR", "-GBP"];
+  const isCrypto = CRYPTO_SUFFIXES.some(s => signal.market_id.toUpperCase().endsWith(s));
+
+  const fmtPrice = (p: number) =>
+    isCrypto
+      ? p >= 1000 ? `$${p.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+                  : `$${p.toFixed(4)}`
+      : `${(p * 100).toFixed(1)}¢`;
+
   const handleApplyModify = () => {
     const price = editPrice ? parseFloat(editPrice) : undefined;
     onModify(signal.id, editSize, price);
@@ -29,12 +38,12 @@ export default function ConfirmationCard({
   };
 
   const METRICS: [string, string][] = [
-    ["Entry",  `${(signal.entry_price  * 100).toFixed(1)}¢`],
-    ["Target", `${(signal.target_price * 100).toFixed(1)}¢`],
-    ["Edge",   `+${(signal.expected_edge * 100).toFixed(2)}%`],
+    ["Entry",  fmtPrice(signal.entry_price)],
+    ["Target", fmtPrice(signal.target_price)],
+    ["Edge",   `+${signal.expected_edge.toFixed(2)}%`],
     ["Size",   `$${signal.suggested_size}`],
-    ["Shares", `${signal.suggested_shares.toFixed(0)}`],
-    ["Conf",   `${(signal.confidence   * 100).toFixed(0)}%`],
+    ["Shares", isCrypto ? signal.suggested_shares.toFixed(6) : `${signal.suggested_shares.toFixed(0)}`],
+    ["Conf",   `${(signal.confidence * 100).toFixed(0)}%`],
   ];
 
   return (
@@ -57,6 +66,16 @@ export default function ConfirmationCard({
           }}>
             {signal.strategy.toUpperCase()}
           </span>
+          {isCrypto && (
+            <span style={{
+              fontSize: 8, fontWeight: 700,
+              background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.35)",
+              borderRadius: 3, padding: "2px 6px", color: "#fbbf24",
+              fontFamily: "IBM Plex Mono, monospace", letterSpacing: 0.5,
+            }}>
+              CRYPTO
+            </span>
+          )}
         </div>
         <span style={{ fontSize: 8, color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace" }}>
           {new Date(signal.created_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}

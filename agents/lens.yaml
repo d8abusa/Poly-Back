@@ -1,0 +1,119 @@
+# LENS — Market Intelligence & Data Analyst Configuration
+# OpenClaw Multi-Agent System for PolyBack
+
+agent:
+  name: "LENS"
+  role: "Market Data Collection & Analysis"
+  model: "claude-opus-4-6"
+  temperature: 0.3
+  max_tokens: 4096
+
+system_prompt: |
+  You are LENS, the Market Intelligence and Data Analyst for PolyBack.
+  Your responsibility is gathering market data, analyzing trends, monitoring events,
+  and providing actionable intelligence about opportunities and risks.
+  You do not execute trades — you inform decisions made by other agents.
+
+capabilities:
+  - "market_discovery": "Identify new markets and emerging opportunities"
+  - "data_gathering": "Collect real-time pricing, volume, liquidity metrics"
+  - "category_analysis": "Track patterns across market categories"
+  - "event_monitoring": "Follow news cycles and resolution dates"
+
+context:
+  working_directory: "/home/robert-nichols/quant_project/Polymarket"
+  docs_path: "./docs/prompts/lens.md"
+  intelligence_output: "./docs/intelligence"
+  market_data_cache: "./data/market-data"
+
+memory:
+  type: "file-based"
+  directory: "./memory/lens"
+  persist_session: true
+  max_history_messages: 100
+
+tools:
+  file_read:
+    enabled: true
+    description: "Read cached market data, previous reports"
+  file_write:
+    enabled: true
+    paths:
+      - "./docs/intelligence/"
+      - "./docs/market-data/"
+      - "./memory/lens/"
+    description: "Write intelligence reports and cache market data"
+  bash_read:
+    enabled: true
+    commands:
+      - "ls"
+      - "cat"
+      - "curl"
+    allow_execution: false
+    description: "Read-only commands for system status checks"
+  api_get:
+    enabled: true
+    endpoints:
+      - "polymarket_api": "Fetch live market data"
+      - "backend_api": "Query internal analytics"
+    rate_limit: "10 requests per minute"
+    description: "Fetch data from Polymarket and backend services"
+
+communication:
+  receives_from: ["NEXUS", "AXIOM"]
+  sends_to:
+    - "NEXUS": "Intelligence reports and market summaries"
+    - "AXIOM": "Market data for backtest calibration"
+    - "FORGE": "API structure context for implementation"
+    - "HARBOR": "Risk alerts from market conditions"
+  protocols:
+    alert: |
+      [LENS_ALERT]
+      Alert Type: [OPPORTUNITY / RISK / EVENT / DATA ANOMALY]
+      Severity: [LOW / MEDIUM / HIGH / CRITICAL]
+
+      Summary: [...]
+      Details: [...]
+      Recommended Action: [...]
+      Evidence: [...]
+      [/LENS_ALERT]
+
+monitoring:
+  scheduled_tasks:
+    - name: "daily_briefing"
+      schedule: "09:00 UTC daily"
+      action: "Generate market overview and new opportunities"
+    - name: "position_monitor"
+      schedule: "every 1 hour"
+      action: "Check open positions for upcoming resolutions"
+    - name: "anomaly_detection"
+      schedule: "continuous"
+      action: "Flag volume spikes, price anomalies"
+
+data_sources:
+  polymarket_api:
+    endpoints:
+      - "/api/v2/market"
+      - "/api/v2/user/profile/markets"
+      - "/api/v1/events"
+    auth_required: true
+    rate_limit: "60 requests per minute"
+  internal_backend:
+    endpoints:
+      - "/api/metrics"
+      - "/api/positions"
+    auth_required: false
+
+security:
+  api_key_handling: "Read from environment variable only"
+  write_restrictions: "Cannot modify source code or configuration files"
+
+logging:
+  level: "info"
+  file: "./logs/agents/lens.log"
+  include_api_responses: false
+
+state:
+  initialize_on_startup: true
+  cache_market_data: true
+  cache_ttl_minutes: 15

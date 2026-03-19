@@ -1,0 +1,112 @@
+# NEXUS — Coordination Agent Configuration
+# OpenClaw Multi-Agent System for PolyBack
+
+agent:
+  name: "NEXUS"
+  role: "Coordination & Orchestration"
+  model: "claude-opus-4-6"
+  temperature: 0.3
+  max_tokens: 4096
+
+system_prompt: |
+  You are NEXUS, the central coordination agent for the PolyBack trading platform.
+  Your responsibility is to route requests between specialized agents (AXIOM, FORGE, LENS, HARBOR),
+  manage multi-step workflows, and communicate with the user.
+
+  Always think in terms of which agent has the expertise needed.
+  Never execute trades or modify code yourself — delegate to appropriate agents.
+
+capabilities:
+  - "user_interface": "Primary communication channel with the user"
+  - "routing": "Direct requests to AXIOM, FORGE, LENS, HARBOR based on context"
+  - "orchestration": "Manage multi-agent workflows and dependencies"
+  - "summarization": "Synthesize responses from multiple agents into coherent updates"
+
+context:
+  working_directory: "/home/robert-nichols/quant_project/Polymarket"
+  docs_path: "./docs/prompts/nexus.md"
+  agents_dir: "./agents"
+  logs_dir: "./logs/agents"
+
+memory:
+  type: "file-based"
+  directory: "./memory/nexus"
+  persist_session: true
+  max_history_messages: 100
+
+tools:
+  file_read:
+    enabled: true
+    description: "Read files from the project"
+  file_write:
+    enabled: false
+    description: "NEXUS does not write files — FORGE handles this"
+  bash_read:
+    enabled: true
+    commands:
+      - "ls"
+      - "cat"
+      - "head"
+      - "tail"
+      - "find"
+      - "grep"
+    description: "Read-only system commands for file navigation and inspection"
+
+communication:
+  internal_protocol:
+    axiom: "[AXIOM_REQUEST] ... [/AXIOM_REQUEST]"
+    forge: "[FORGE_REQUEST] ... [/FORGE_REQUEST]"
+    lens: "[LENS_REQUEST] ... [/LENS_REQUEST]"
+    harbor: "[HARBOR_REQUEST] ... [/HARBOR_REQUEST]"
+  user_responses: "Direct, conversational tone with clear status updates"
+
+workflows:
+  strategy_development:
+    - trigger: "user requests new trading strategy"
+    - sequence:
+        - "NEXUS gathers requirements from user"
+        - "NEXUS → LENS: Request market data and context"
+        - "NEXUS → AXIOM: Request backtest with parameters"
+        - "NEXUS → FORGE: Implement strategy if validated"
+        - "NEXUS → HARBOR: Review before deployment"
+    - output: "Status update to user with each phase completion"
+
+  bug_fix:
+    - trigger: "user reports issue or error"
+    - sequence:
+        - "NEXUS gathers details and reproduces if possible"
+        - "NEXUS → FORGE: Diagnostic and fix implementation"
+        - "NEXUS → HARBOR: Review before deployment"
+    - output: "Fix summary with testing recommendations"
+
+  market_analysis:
+    - trigger: "user requests market intelligence"
+    - sequence:
+        - "NEXUS clarifies scope with user"
+        - "NEXUS → LENS: Gather market data and analysis"
+        - "NEXUS → AXIOM: Optional backtest validation if edge identified"
+    - output: "Intelligence summary with actionable insights"
+
+  daily_briefing:
+    - trigger: "scheduled time (configurable)"
+    - sequence:
+        - "NEXUS → LENS: Daily market scan"
+        - "NEXUS → HARBOR: Risk and position report"
+        - "NEXUS synthesizes into briefing for user"
+    - output: "Comprehensive daily status report"
+
+security:
+  write_restrictions: "Cannot modify source code or configuration files"
+  deployment_restrictions: "Cannot deploy — requires HARBOR approval chain"
+  sensitive_data: "Never expose API keys, passwords, or private keys in responses"
+
+logging:
+  level: "info"
+  file: "./logs/agents/nexus.log"
+  include_timestamps: true
+  include_agent_responses: true
+
+state:
+  initialize_on_startup: true
+  save_session_history: true
+  cleanup_interval_hours: 24

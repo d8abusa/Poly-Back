@@ -33,7 +33,8 @@ interface Snapshot {
 }
 
 interface LiveFeedProps {
-  markets: Market[];
+  markets:  Market[];
+  exchange: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -153,7 +154,7 @@ function TradeStream({ trades }: { trades: Trade[] }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function LiveFeed({ markets }: LiveFeedProps) {
+export default function LiveFeed({ markets, exchange }: LiveFeedProps) {
   const [search, setSearch]           = useState("");
   const [showActive, setShowActive]   = useState(true);
   const [activeMarkets, setActiveMarkets] = useState<Market[]>([]);
@@ -166,11 +167,11 @@ export default function LiveFeed({ markets }: LiveFeedProps) {
 
   // Fetch active markets independently for the feed
   useEffect(() => {
-    fetch("/api/markets?limit=100&order=volumeNum&active=true&closed=false")
+    fetch(`/api/markets?limit=100&order=volumeNum&active=true&closed=false&exchange=${exchange}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => d?.markets && setActiveMarkets(d.markets))
       .catch(() => {});
-  }, []);
+  }, [exchange]);
 
   const pool = showActive ? activeMarkets : markets;
 
@@ -181,14 +182,13 @@ export default function LiveFeed({ markets }: LiveFeedProps) {
   });
 
   const poll = async (market: Market) => {
-    if (!market.token_id || !market.condition_id) {
-      setError("Market has no token_id or condition_id — no live data available.");
-      return;
-    }
     setLoading(true);
     setError(null);
     try {
-      const url = `/api/feed/snapshot?token_id=${encodeURIComponent(market.token_id)}&condition_id=${encodeURIComponent(market.condition_id)}`;
+      const mid = market.id;
+      const tid = market.token_id ?? market.id;
+      const cid = market.condition_id ?? market.id;
+      const url = `/api/feed/snapshot?market_id=${encodeURIComponent(mid)}&token_id=${encodeURIComponent(tid)}&condition_id=${encodeURIComponent(cid)}&exchange=${exchange}`;
       const r = await fetch(url);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setSnapshot(await r.json());
@@ -211,10 +211,19 @@ export default function LiveFeed({ markets }: LiveFeedProps) {
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
+  // Clear selection when exchange changes
+  useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setSelected(null);
+    setSnapshot(null);
+    setError(null);
+    setActiveMarkets([]);
+  }, [exchange]);
+
   // Auto-select first active market once activeMarkets loads
   useEffect(() => {
     if (!selected && activeMarkets.length > 0) {
-      const first = activeMarkets.find(m => m.token_id) ?? activeMarkets[0];
+      const first = activeMarkets[0];
       select(first);
     }
   }, [activeMarkets.length]);

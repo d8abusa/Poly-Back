@@ -1,0 +1,74 @@
+{
+  "tasks": [
+    {
+      "id": "ec0f3a86",
+      "agent": "lens",
+      "description": "Fetch top 50 Kalshi markets by volume, filter for sufficient liquidity and price history, deliver scored opportunity list to axiom",
+      "priority": "normal",
+      "status": "failed",
+      "created_at": "2026-03-19T02:28:18.123911+00:00",
+      "updated_at": "2026-03-19T03:55:50.476204+00:00",
+      "result": "duplicate - superseded by 25756d6f"
+    },
+    {
+      "id": "7e2d57b1",
+      "agent": "forge",
+      "description": "Confirm Kalshi batch routing in backtest pipeline. Investigate and resolve acpx plugin conflict in openclaw.json causing agent subprocess failures.",
+      "priority": "normal",
+      "status": "failed",
+      "created_at": "2026-03-19T02:28:18.140194+00:00",
+      "updated_at": "2026-03-19T04:21:55.280629+00:00",
+      "result": "carry over to tomorrow \u2014 not yet started"
+    },
+    {
+      "id": "25756d6f",
+      "agent": "lens",
+      "description": "Fetch Kalshi markets (top 50 by volume, filtered) and write to /home/robert-nichols/quant_project/Polymarket/kalshi_markets.csv",
+      "priority": "normal",
+      "status": "pending",
+      "created_at": "2026-03-19T03:50:30.368152+00:00",
+      "updated_at": "2026-03-19T03:50:30.368159+00:00",
+      "result": null
+    },
+    {
+      "id": "e6f55619",
+      "agent": "forge",
+      "description": "Implement risk_manager.py and drawdown_monitor.py \u2014 these are HARBOR blockers preventing live trading. risk_manager.py: enforce position size caps pre-exchange. drawdown_monitor.py: 20% session drawdown trips halt. Also implement POST /api/positions/risk/kill hard kill switch endpoint.",
+      "priority": "normal",
+      "status": "done",
+      "created_at": "2026-03-19T03:53:51.894376+00:00",
+      "updated_at": "2026-03-19T04:25:29.567792+00:00",
+      "result": null
+    },
+    {
+      "id": "4e3548c2",
+      "agent": "forge",
+      "description": "Implement risk_manager.py and drawdown_monitor.py immediately",
+      "priority": "normal",
+      "status": "failed",
+      "created_at": "2026-03-19T03:55:08.644858+00:00",
+      "updated_at": "2026-03-19T03:55:50.492694+00:00",
+      "result": "duplicate - superseded by e6f55619"
+    },
+    {
+      "id": "d6fad9a5",
+      "agent": "forge",
+      "description": "OVERNIGHT: Write drawdown_monitor.py to ~/quant_project/Polymarket/backend/services/ and admin.py to ~/quant_project/Polymarket/backend/routes/. FORGE generated the code today but stopped before writing. Write the files directly \u2014 no asking permission.",
+      "priority": "normal",
+      "status": "pending",
+      "created_at": "2026-03-19T04:21:55.297074+00:00",
+      "updated_at": "2026-03-19T04:21:55.297086+00:00",
+      "result": null
+    },
+    {
+      "id": "54d89799",
+      "agent": "lens",
+      "description": "OVERNIGHT: Re-run Kalshi market fetch. Data was fetched today but CSV never written. Write filtered results to ~/quant_project/Polymarket/kalshi_markets.csv \u2014 do not ask permission, just write it.",
+      "priority": "normal",
+      "status": "pending",
+      "created_at": "2026-03-19T04:21:55.313079+00:00",
+      "updated_at": "2026-03-19T04:21:55.313091+00:00",
+      "result": null
+    }
+  ]
+}

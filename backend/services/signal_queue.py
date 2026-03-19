@@ -1,36 +1,85 @@
 """
-In-memory signal queue for CONFIRM mode execution.
+Signal queue — backed by SQLite with an in-memory cache.
 
-Module-level dicts/lists are safe for single-process uvicorn.
-Replace with Redis / DB for multi-worker deployments.
+Same public API as before; state now survives backend restarts.
+CONFIRM-mode signals persist across restarts so no pending approvals are lost.
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from ..models.schemas import SignalSchema
+from .db import get_conn, signal_to_row
 
 
-# ── Stores ─────────────────────────────────────────────────────────────────────
+# ── In-memory cache ───────────────────────────────────────────────────────────
+
 _pending:  dict[str, SignalSchema] = {}
 _executed: list[SignalSchema] = []
 _rejected: list[SignalSchema] = []
+_loaded = False
 
 
-# ── Mutations ──────────────────────────────────────────────────────────────────
+def _ensure_loaded() -> None:
+    global _loaded
+    if _loaded:
+        return
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM signals ORDER BY created_at ASC").fetchall()
+    for row in rows:
+        d = dict(row)
+        payload = json.loads(d.get("payload") or "{}")
+        try:
+            sig = SignalSchema(**payload)
+        except Exception:
+            continue
+        if sig.status == "pending":
+            _pending[sig.id] = sig
+        elif sig.status in ("approved", "auto_executed"):
+            _executed.append(sig)
+        elif sig.status == "rejected":
+            _rejected.append(sig)
+    _loaded = True
+
+
+def _upsert(sig: SignalSchema) -> None:
+    row = signal_to_row(sig)
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO signals
+                (id, status, market_id, market_title, strategy, side, entry_price,
+                 target_price, stop_loss, suggested_size, suggested_shares,
+                 execution_mode, created_at, resolved_at, payload)
+            VALUES
+                (:id, :status, :market_id, :market_title, :strategy, :side, :entry_price,
+                 :target_price, :stop_loss, :suggested_size, :suggested_shares,
+                 :execution_mode, :created_at, :resolved_at, :payload)
+            ON CONFLICT(id) DO UPDATE SET
+                status=excluded.status,
+                resolved_at=excluded.resolved_at,
+                suggested_size=excluded.suggested_size,
+                payload=excluded.payload
+        """, row)
+
+
+# ── Mutations ─────────────────────────────────────────────────────────────────
 
 def add_signal(signal: SignalSchema) -> SignalSchema:
+    _ensure_loaded()
     if not signal.id:
         signal.id = str(uuid.uuid4())
     signal.status = "pending"
     signal.created_at = datetime.now(timezone.utc).isoformat()
     signal.resolved_at = None
+    _upsert(signal)
     _pending[signal.id] = signal
     return signal
 
 
 def approve_signal(signal_id: str, modified_size: Optional[int] = None) -> Optional[SignalSchema]:
+    _ensure_loaded()
     sig = _pending.pop(signal_id, None)
     if sig is None:
         return None
@@ -38,39 +87,47 @@ def approve_signal(signal_id: str, modified_size: Optional[int] = None) -> Optio
         sig.suggested_size = modified_size
     sig.status = "approved"
     sig.resolved_at = datetime.now(timezone.utc).isoformat()
+    _upsert(sig)
     _executed.append(sig)
     return sig
 
 
 def reject_signal(signal_id: str) -> Optional[SignalSchema]:
+    _ensure_loaded()
     sig = _pending.pop(signal_id, None)
     if sig is None:
         return None
     sig.status = "rejected"
     sig.resolved_at = datetime.now(timezone.utc).isoformat()
+    _upsert(sig)
     _rejected.append(sig)
     return sig
 
 
 def modify_signal(signal_id: str, size: int, price: Optional[float] = None) -> Optional[SignalSchema]:
+    _ensure_loaded()
     sig = _pending.get(signal_id)
     if sig is None:
         return None
     sig.suggested_size = size
     if price is not None:
         sig.entry_price = price
+    _upsert(sig)
     return sig
 
 
-# ── Reads ──────────────────────────────────────────────────────────────────────
+# ── Reads ─────────────────────────────────────────────────────────────────────
 
 def get_pending() -> list[SignalSchema]:
+    _ensure_loaded()
     return list(_pending.values())
 
 
 def get_executed() -> list[SignalSchema]:
+    _ensure_loaded()
     return list(_executed)
 
 
 def get_rejected() -> list[SignalSchema]:
+    _ensure_loaded()
     return list(_rejected)

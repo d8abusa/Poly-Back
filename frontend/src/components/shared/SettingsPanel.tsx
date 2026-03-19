@@ -15,9 +15,10 @@ interface ExchangeStatus {
 }
 
 interface AllSettings {
-  polymarket: ExchangeStatus;
+  coinbase:   ExchangeStatus;
   kalshi:     ExchangeStatus;
   manifold:   ExchangeStatus;
+  polymarket: ExchangeStatus;
 }
 
 interface SettingsPanelProps {
@@ -27,17 +28,15 @@ interface SettingsPanelProps {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const EXCHANGE_META = {
-  polymarket: {
-    name:   "Polymarket",
-    color:  "#00d4a8",
-    logo:   "PM",
-    desc:   "Decentralized prediction market on Polygon",
-    docs:   "https://polymarket.com/profile",
+  coinbase: {
+    name:   "Coinbase",
+    color:  "#0052ff",
+    logo:   "CB",
+    desc:   "Primary live trading exchange — Advanced Trade API",
+    docs:   "https://docs.cdp.coinbase.com/advanced-trade/docs/rest-api-auth",
     fields: [
-      { key: "POLY_API_KEY",        label: "API Key",        hint: "From polymarket.com → Profile → API Keys" },
-      { key: "POLY_API_SECRET",     label: "API Secret",     hint: "Generated with your API Key" },
-      { key: "POLY_API_PASSPHRASE", label: "API Passphrase", hint: "Set when creating your API Key" },
-      { key: "POLY_PRIVATE_KEY",    label: "Private Key",    hint: "L1 wallet key — required for order placement only" },
+      { key: "COINBASE_KEY_NAME",    label: "Key Name",    hint: "Full path: organizations/{org_id}/apiKeys/{key_id}" },
+      { key: "COINBASE_PRIVATE_KEY", label: "Private Key", hint: "PEM-encoded EC private key (ES256)" },
     ],
   },
   kalshi: {
@@ -48,7 +47,7 @@ const EXCHANGE_META = {
     docs:   "https://kalshi.com/account/api",
     fields: [
       { key: "KALSHI_API_KEY",      label: "API Key",      hint: "From kalshi.com → Account → API" },
-      { key: "KALSHI_API_PASSWORD", label: "API Password", hint: "Set when creating your Kalshi API key" },
+      { key: "KALSHI_PRIVATE_KEY",  label: "Private Key",  hint: "PEM RSA private key for order signing (RSA-PSS)" },
     ],
   },
   manifold: {
@@ -57,6 +56,14 @@ const EXCHANGE_META = {
     logo:   "MF",
     desc:   "Open-source AMM — play money, no credentials required",
     docs:   "https://manifold.markets",
+    fields: [] as { key: string; label: string; hint: string }[],
+  },
+  polymarket: {
+    name:   "Polymarket",
+    color:  "#606880",
+    logo:   "PM",
+    desc:   "Disabled — geoblocked for US users",
+    docs:   "https://polymarket.com",
     fields: [] as { key: string; label: string; hint: string }[],
   },
 } as const;
@@ -299,17 +306,17 @@ function ExchangeSection({
 // Map env key format → JSON body key expected by the backend
 function _fieldKeyToBodyKey(exchange: ExchangeKey, envKey: string): string {
   const maps: Record<ExchangeKey, Record<string, string>> = {
-    polymarket: {
-      POLY_API_KEY:        "api_key",
-      POLY_API_SECRET:     "api_secret",
-      POLY_API_PASSPHRASE: "api_passphrase",
-      POLY_PRIVATE_KEY:    "private_key",
+    coinbase: {
+      COINBASE_KEY_NAME:    "key_name",
+      COINBASE_PRIVATE_KEY: "private_key",
     },
     kalshi: {
       KALSHI_API_KEY:      "api_key",
       KALSHI_API_PASSWORD: "api_password",
+      KALSHI_PRIVATE_KEY:  "private_key",
     },
-    manifold: {},
+    manifold:   {},
+    polymarket: {},
   };
   return maps[exchange][envKey] ?? envKey.toLowerCase();
 }
@@ -397,7 +404,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
               {loading ? (
                 <div style={{ color: "#606880", fontSize: 12, textAlign: "center", paddingTop: 40 }}>Loading settings…</div>
               ) : settings ? (
-                (["polymarket", "kalshi", "manifold"] as ExchangeKey[]).map(ex => (
+                (["coinbase", "kalshi", "manifold", "polymarket"] as ExchangeKey[]).map(ex => (
                   <ExchangeSection
                     key={ex}
                     exKey={ex}
@@ -423,7 +430,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                     ["Version",   "0.1.0"],
                     ["Backend",   "FastAPI + Python"],
                     ["Frontend",  "React 18 + TypeScript"],
-                    ["Exchanges", "Polymarket · Kalshi · Manifold"],
+                    ["Exchanges", "Coinbase · Kalshi · Manifold"],
                   ].map(([k, v]) => (
                     <div key={k} style={{ background: "#0d1017", borderRadius: 6, padding: "10px 12px", border: "1px solid #1e2330" }}>
                       <div style={{ fontSize: 9, color: "#606880", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{k}</div>
