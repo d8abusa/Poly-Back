@@ -26,7 +26,7 @@ from typing import Optional
 
 import httpx
 
-from .db import get_conn
+from .db import get_cursor
 
 log = logging.getLogger(__name__)
 
@@ -74,16 +74,17 @@ SERIES_META: dict[str, dict] = {
 
 def get_pull_count() -> int:
     """Return total number of FRED API calls made so far."""
-    with get_conn() as conn:
-        row = conn.execute("SELECT COALESCE(SUM(api_calls), 0) FROM fred_pull_log").fetchone()
-        return int(row[0])
+    with get_cursor() as cur:
+        cur.execute("SELECT COALESCE(SUM(api_calls), 0) AS total FROM fred_pull_log")
+        row = cur.fetchone()
+        return int(row["total"])
 
 
 def _log_pull(series_id: str, obs_count: int) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO fred_pull_log (series_id, pulled_at, obs_count, api_calls) VALUES (?,?,?,1)",
+    with get_cursor() as cur:
+        cur.execute(
+            "INSERT INTO fred_pull_log (series_id, pulled_at, obs_count, api_calls) VALUES (%s,%s,%s,1)",
             (series_id, now, obs_count),
         )
 
@@ -92,24 +93,26 @@ def _log_pull(series_id: str, obs_count: int) -> None:
 
 def _get_cached(series_id: str) -> list[dict]:
     """Return all cached observations for a series, newest first."""
-    with get_conn() as conn:
-        rows = conn.execute(
+    with get_cursor() as cur:
+        cur.execute(
             "SELECT series_id, obs_date, value, pulled_at, release_name, units "
-            "FROM fred_cache WHERE series_id=? ORDER BY obs_date DESC",
+            "FROM fred_cache WHERE series_id=%s ORDER BY obs_date DESC",
             (series_id,),
-        ).fetchall()
+        )
+        rows = cur.fetchall()
     return [dict(r) for r in rows]
 
 
 def _last_pull_date(series_id: str) -> Optional[datetime]:
     """When was this series last pulled from FRED API?"""
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT MAX(pulled_at) FROM fred_pull_log WHERE series_id=?",
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT MAX(pulled_at) AS last FROM fred_pull_log WHERE series_id=%s",
             (series_id,),
-        ).fetchone()
-    if row and row[0]:
-        return datetime.fromisoformat(row[0])
+        )
+        row = cur.fetchone()
+    if row and row["last"]:
+        return datetime.fromisoformat(row["last"])
     return None
 
 
@@ -129,7 +132,7 @@ def _store_observations(series_id: str, observations: list[dict], meta: dict) ->
     units = meta.get("units", SERIES_META.get(series_id, {}).get("units", ""))
 
     stored = 0
-    with get_conn() as conn:
+    with get_cursor() as cur:
         for obs in observations:
             val_str = obs.get("value", ".")
             if val_str == "." or val_str is None:
@@ -138,12 +141,12 @@ def _store_observations(series_id: str, observations: list[dict], meta: dict) ->
                 value = float(val_str)
             except ValueError:
                 continue
-            conn.execute(
+            cur.execute(
                 """INSERT INTO fred_cache (series_id, obs_date, value, pulled_at, release_name, units)
-                   VALUES (?,?,?,?,?,?)
-                   ON CONFLICT(series_id, obs_date) DO UPDATE SET
-                       value=excluded.value,
-                       pulled_at=excluded.pulled_at""",
+                   VALUES (%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (series_id, obs_date) DO UPDATE SET
+                       value=EXCLUDED.value,
+                       pulled_at=EXCLUDED.pulled_at""",
                 (series_id, obs["date"], value, now, release_name, units),
             )
             stored += 1

@@ -16,6 +16,12 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import List
 
+try:
+    from xgboost import XGBClassifier
+    _XGB_AVAILABLE = True
+except ImportError:
+    _XGB_AVAILABLE = False
+
 from ..models.schemas import BacktestRequest, BacktestResult, BatchBacktestResult
 
 log = logging.getLogger(__name__)
@@ -86,6 +92,10 @@ class PredictionMarketBacktester:
         # Kelly: tracks consecutive wins/losses for fractional sizing
         self._kelly_last_pnls: deque = deque(maxlen=20)
 
+        # XGBoost: model + feature buffer
+        self._xgb_model = None
+        self._xgb_probs: list = []   # raw probability history for feature building
+
         # Market Making: tracks our two open legs
         # Each leg: {"side": "YES"|"NO", "entry": float, "shares": float}
         self._mm_bid_leg: dict | None = None   # long YES at bid
@@ -122,6 +132,8 @@ class PredictionMarketBacktester:
                 self._kelly(prob, date)
             elif self.req.strategy == "market_making":
                 self._market_making(prob, date)
+            elif self.req.strategy == "xgboost":
+                self._xgboost(prob, date)
 
         # Force-close any open position at last price
         if self.position > 0:
@@ -214,7 +226,10 @@ class PredictionMarketBacktester:
 
         z = (prob - mean) / std
 
-        entry_z = getattr(self.req, "zscore_entry", 1.5)
+        base_entry_z = getattr(self.req, "zscore_entry", 1.5)
+        # Widen entry threshold in uncertain macro regimes (macro_zscore_mult >= 1.0)
+        macro_mult = getattr(self.req, "macro_zscore_mult", 1.0)
+        entry_z = base_entry_z * macro_mult
         exit_z  = getattr(self.req, "zscore_exit",  0.0)
         stop_z  = getattr(self.req, "zscore_stop",  3.0)
 
@@ -299,15 +314,28 @@ class PredictionMarketBacktester:
           entry_threshold float  0.30  same as threshold strategy
           exit_threshold  float  0.70  same as threshold strategy
         """
-        kelly_fraction = getattr(self.req, "kelly_fraction", 0.5)
+        base_fraction  = getattr(self.req, "kelly_fraction", 0.5)
+        # Apply macro caution factor (0 < caution <= 1.0) — reduces fraction in risky regimes
+        macro_caution  = getattr(self.req, "macro_kelly_caution", 1.0)
+        kelly_fraction = base_fraction * macro_caution
         stop = self.req.stop_loss
 
         if self.position == 0 and self.cash > 0:
             if prob <= self.req.entry_threshold:
                 # Estimate edge: target outcome is prob reaching exit_threshold
                 b = (self.req.exit_threshold / prob) - 1.0   # net odds per share
-                # Win probability: use recent win rate if available, else 0.55
-                p_win = self._recent_win_rate()
+                # Win probability: prefer FRED-calibrated p_true when available + confident
+                fred_p     = getattr(self.req, "fred_p_true", None)
+                fred_conf  = getattr(self.req, "fred_confidence", None)
+                use_fred   = (
+                    fred_p is not None
+                    and fred_conf is not None
+                    and fred_conf >= 0.4
+                )
+                if use_fred:
+                    p_win = fred_p
+                else:
+                    p_win = self._recent_win_rate()
                 q_win = 1.0 - p_win
                 full_kelly = (b * p_win - q_win) / b if b > 0 else 0.0
                 fraction   = max(0.0, min(1.0, full_kelly * kelly_fraction))
@@ -382,6 +410,141 @@ class PredictionMarketBacktester:
             elif stop is not None and prob <= stop:
                 self._sell(prob, date, forced=True, note="prob stop-loss")
                 self._mm_bid_leg = None
+
+    def _xgb_features(self, probs: list) -> np.ndarray | None:
+        """
+        Build a feature vector from the probability history.
+        Requires at least 21 data points (20-tick window + current).
+        Features: rolling stats, momentum at multiple lags, volatility,
+                  distance from 0.5, time index.
+        """
+        if len(probs) < 21:
+            return None
+        arr = np.array(probs, dtype=float)
+        p   = arr[-1]
+        w20 = arr[-20:]
+        w10 = arr[-10:]
+        w5  = arr[-5:]
+
+        mean20 = w20.mean()
+        std20  = w20.std() + 1e-9
+        z20    = (p - mean20) / std20
+
+        features = [
+            p,                                        # current prob
+            mean20,                                   # 20-tick mean
+            std20,                                    # 20-tick std (volatility)
+            z20,                                      # z-score vs 20-tick mean
+            w10.mean(),                               # 10-tick mean
+            w10.std() + 1e-9,                         # 10-tick std
+            w5.mean(),                                # 5-tick mean
+            p - arr[-2],                              # 1-tick momentum
+            p - arr[-4],                              # 3-tick momentum
+            p - arr[-6],                              # 5-tick momentum
+            p - arr[-11],                             # 10-tick momentum
+            p - arr[-21],                             # 20-tick momentum
+            abs(p - 0.5),                             # anchoring distance
+            1.0 if p > mean20 else 0.0,               # above/below mean flag
+            float(np.sum(np.diff(w20) > 0)) / 19,    # directional ratio (% up ticks)
+            float(len(probs)),                        # time index (progress)
+        ]
+
+        # Append FRED macro features when available (5 normalised values).
+        # These are pre-computed and stored on the request by the backtest route.
+        macro_feats = getattr(self.req, "macro_features", [])
+        if macro_feats:
+            features.extend(macro_feats)
+
+        return np.array(features, dtype=float).reshape(1, -1)
+
+    def _xgboost(self, prob: float, date: str):
+        """
+        XGBoost Gradient Boosting strategy.
+
+        Walk-forward approach — no lookahead bias:
+          1. Accumulate probability history.
+          2. After xgb_train_frac of the series, train an initial model on
+             (features[t], label[t]) where label = 1 if prob[t+1] > prob[t].
+          3. For each subsequent tick: predict → trade → optionally retrain.
+          4. Enter long when predicted_proba >= xgb_confidence.
+          5. Exit when predicted_proba drops below 0.5, or stop-loss hit.
+
+        Parameters (BacktestRequest):
+          xgb_n_estimators   int    330   boosting rounds (correction cycles)
+          xgb_learning_rate  float  0.1   η — step size per correction
+          xgb_max_depth      int    3     tree depth (keep shallow to reduce overfit)
+          xgb_train_frac     float  0.30  fraction of series used for initial training
+          xgb_retrain_every  int    20    retrain every N ticks on expanded history
+          xgb_confidence     float  0.55  min predicted P(up) to enter long
+        """
+        if not _XGB_AVAILABLE:
+            return
+
+        self._xgb_probs.append(prob)
+        n        = len(self._xgb_probs)
+        n_total  = len(self.history)
+        train_n  = max(22, int(n_total * getattr(self.req, "xgb_train_frac", 0.30)))
+
+        # ── Phase 1: accumulate until we have enough history to train ─────────
+        if n < train_n + 1:
+            return
+
+        # ── Phase 2: initial training (once) ─────────────────────────────────
+        retrain_every = getattr(self.req, "xgb_retrain_every", 20)
+        if self._xgb_model is None or (n - train_n) % retrain_every == 0:
+            X, y = [], []
+            probs_so_far = self._xgb_probs[:-1]   # exclude current tick
+            for i in range(20, len(probs_so_far) - 1):
+                feat = self._xgb_features(probs_so_far[:i+1])
+                if feat is None:
+                    continue
+                label = 1 if probs_so_far[i + 1] > probs_so_far[i] else 0
+                X.append(feat[0])
+                y.append(label)
+
+            if len(X) < 10:
+                return
+
+            X_arr, y_arr = np.array(X), np.array(y)
+            # Skip training if only one class present (flat market)
+            if len(np.unique(y_arr)) < 2:
+                return
+
+            self._xgb_model = XGBClassifier(
+                n_estimators=getattr(self.req, "xgb_n_estimators", 330),
+                learning_rate=getattr(self.req, "xgb_learning_rate", 0.1),
+                max_depth=getattr(self.req, "xgb_max_depth", 3),
+                use_label_encoder=False,
+                eval_metric="logloss",
+                verbosity=0,
+                random_state=42,
+            )
+            self._xgb_model.fit(X_arr, y_arr)
+
+        # ── Phase 3: predict and trade ────────────────────────────────────────
+        if self._xgb_model is None:
+            return
+
+        feat = self._xgb_features(self._xgb_probs)
+        if feat is None:
+            return
+
+        try:
+            proba_up = float(self._xgb_model.predict_proba(feat)[0][1])
+        except Exception:
+            return
+
+        confidence = getattr(self.req, "xgb_confidence", 0.55)
+        stop       = self.req.stop_loss
+
+        if self.position == 0 and self.cash > 0:
+            if proba_up >= confidence:
+                self._buy(prob, date, note=f"xgb_p={proba_up:.2f}")
+        elif self.position > 0:
+            if proba_up < 0.50:
+                self._sell(prob, date, note=f"xgb_p={proba_up:.2f} exit")
+            elif stop is not None and prob <= stop:
+                self._sell(prob, date, forced=True, note="prob stop-loss")
 
     # ── Trade execution ───────────────────────────────────────────────────────
 

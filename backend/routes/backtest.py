@@ -10,10 +10,51 @@ from ..models.schemas import (
 )
 from ..services.exchange_router import get_exchange_client
 from ..services.backtest_engine import PredictionMarketBacktester, run_batch
+from ..services.macro_context import get_macro_context
+from ..services.fred_prior import calibrate_from_title
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
+
+
+def _inject_macro(req: BacktestRequest, market_title: str = "") -> BacktestRequest:
+    """
+    Enrich a BacktestRequest with current macro context and FRED prior.
+    Pure reads from local cache — adds no latency in the common case.
+    Returns a mutated copy of req with macro fields populated.
+    """
+    try:
+        ctx = get_macro_context()
+        req = req.model_copy(update={
+            "macro_zscore_mult":   ctx.zscore_multiplier,
+            "macro_kelly_caution": ctx.kelly_caution,
+            "macro_features":      ctx.features,
+        })
+        log.debug(
+            "macro context: recession=%s fed=%s inflation=%s zscore_mult=%.2f kelly_caution=%.2f",
+            ctx.recession_risk, ctx.fed_stance, ctx.inflation_level,
+            ctx.zscore_multiplier, ctx.kelly_caution,
+        )
+    except Exception as exc:
+        log.warning("macro context unavailable: %s", exc)
+
+    if market_title and req.strategy == "kelly":
+        try:
+            prior = calibrate_from_title(market_title)
+            if prior["p_true"] is not None and prior["confidence"] >= 0.4:
+                req = req.model_copy(update={
+                    "fred_p_true":    prior["p_true"],
+                    "fred_confidence": prior["confidence"],
+                })
+                log.info(
+                    "FRED prior applied: series=%s p_true=%.3f conf=%.2f",
+                    prior["series_id"], prior["p_true"], prior["confidence"],
+                )
+        except Exception as exc:
+            log.warning("FRED prior calibration failed: %s", exc)
+
+    return req
 
 
 @router.post("", response_model=BacktestResult)
@@ -26,6 +67,12 @@ async def run_backtest(req: BacktestRequest, exchange: str = "polymarket"):
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch price history: {e}")
+
+    # Enrich with macro context before running
+    market_title = ""
+    if history:
+        market_title = history[0].get("title", "") if isinstance(history[0], dict) else ""
+    req = _inject_macro(req, market_title)
 
     engine = PredictionMarketBacktester(req, history)
     result = engine.run()

@@ -10,8 +10,35 @@ GET  /api/fred/budget             — how many pulls remain
 from fastapi import APIRouter, HTTPException, Query
 
 from ..services.fred_service import get_series, get_dashboard, get_pull_count, SERIES_META
+from ..services.macro_context import get_macro_context, macro_context_as_dict
+from ..services.fred_prior import calibrate_from_title
 
 router = APIRouter(prefix="/api/fred", tags=["fred"])
+
+
+@router.get("/macro-context")
+async def fred_macro_context():
+    """
+    Current macro regime derived from cached FRED data.
+    Pure cache reads — never burns a pull.
+    Includes strategy modifiers (zscore_multiplier, kelly_caution) and
+    normalised XGBoost feature vector.
+    """
+    ctx = get_macro_context()
+    return macro_context_as_dict(ctx)
+
+
+@router.post("/prior")
+async def fred_prior(body: dict):
+    """
+    Estimate a FRED-calibrated probability for a market title.
+    Body: {"title": "Will CPI exceed 3.5% in May?"}
+    Returns p_true, confidence, series matched, and extrapolation details.
+    """
+    title = body.get("title", "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    return calibrate_from_title(title)
 
 
 @router.get("/budget")

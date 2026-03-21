@@ -24,7 +24,7 @@
    - [Risk Guardrails](#53-risk-guardrails)
    - [Stop-Loss Executor](#54-stop-loss-executor)
    - [Kill Switch](#55-kill-switch)
-   - [SQLite Persistence](#56-sqlite-persistence)
+   - [Database Persistence](#56-database-persistence)
    - [Exchange Configuration](#57-exchange-configuration)
 7. [Kalshi Exchange Integration](#7-kalshi-exchange-integration)
    - [Overview](#71-overview)
@@ -34,6 +34,16 @@
    - [Order Execution](#75-order-execution)
    - [Contract Format](#76-contract-format)
    - [Verifying Connectivity](#77-verifying-connectivity)
+8. [FRED Economic Data & Macro Context](#8-fred-economic-data--macro-context)
+   - [Overview](#81-overview)
+   - [Tracked Series](#82-tracked-series)
+   - [Initial Data Pull](#83-initial-data-pull)
+   - [Macro Context](#84-macro-context)
+   - [Strategy Modifiers](#85-strategy-modifiers-applied-automatically)
+   - [FRED Prior Calculator](#86-fred-prior-calculator-kelly-calibration)
+   - [XGBoost Macro Features](#87-xgboost-macro-features)
+   - [FRED Dashboard](#88-fred-dashboard)
+   - [API Reference](#89-api-reference)
 
 ---
 
@@ -279,6 +289,31 @@ The risk that the counterparty trading against you has better information. In pr
 
 ---
 
+### Macro Context
+
+**Macro Context**
+A real-time snapshot of macroeconomic regime derived from FRED data. Summarises recession risk, Fed stance, inflation level/trend, labor market health, and dollar direction. Used by PolyBack to automatically modulate strategy parameters — no manual configuration required.
+
+**FRED (Federal Reserve Economic Data)**
+A database of 800,000+ economic time series maintained by the Federal Reserve Bank of St. Louis. PolyBack tracks eight key series (CPI, unemployment, Fed funds rate, yield spread, etc.) and caches them locally to avoid repeated API calls.
+
+**Macro Regime**
+The prevailing macroeconomic environment, summarised as a set of categorical signals (e.g., "tightening, above-target inflation, low recession risk"). Different regimes alter the reliability of mean-reversion and Kelly strategies, so PolyBack adjusts thresholds automatically based on the current regime.
+
+**FRED Prior**
+A probability estimate derived from FRED data for markets whose titles reference an economic threshold (e.g., "Will CPI exceed 3.5%?"). Computed by fitting a linear trend to recent cached observations and using a normal distribution to estimate P(future_value > threshold). Used as the `p_true` input to the Kelly strategy when confidence is sufficient (≥ 0.4).
+
+**Z-Score Multiplier**
+A macro-context modifier that widens the Z-Score Reversion entry threshold in uncertain macroeconomic environments. A multiplier of 1.35 means the strategy requires a 35% larger statistical deviation before entering — protecting against mistaking a macro regime shift for a mean-reversion opportunity.
+
+**Kelly Caution Factor**
+A macro-context modifier that reduces the Kelly fraction in risky macroeconomic environments (inverted yield curve, above-target inflation during tightening). Since Kelly sizing is extremely sensitive to edge estimation error, and macro uncertainty makes edge estimates less reliable, the caution factor provides an automatic downward adjustment.
+
+**Yield Spread (T10Y2Y)**
+The difference between 10-year and 2-year US Treasury yields. A negative spread (inverted yield curve) has historically preceded US recessions by 6–18 months. PolyBack uses the yield spread as the primary recession risk signal for strategy modifier calculation.
+
+---
+
 ## 3. Embedded Strategies Reference
 
 PolyBack ships with seven built-in strategies. All parameters are configurable via the Strategies screen; custom strategies can be created and edited without code.
@@ -417,6 +452,8 @@ More adaptive than fixed-threshold strategies — the entry level auto-adjusts a
 **Key Risks**
 Z-score assumes stationarity (a stable mean and variance). Markets approaching resolution violate this assumption as probabilities accelerate toward 0 or 1. Short windows are noisy; long windows miss short-term opportunities.
 
+> **Macro Context Integration:** When FRED data is cached, the backtest engine automatically multiplies `Entry Z-Score` by the current `zscore_multiplier` before evaluating entries. During inverted yield curve environments (recession risk = high) the effective entry threshold widens by up to 35%, protecting against regime-shift false signals. See [§8.5](#85-strategy-modifiers-applied-automatically).
+
 ---
 
 ### 3.4 Kelly Criterion
@@ -462,6 +499,10 @@ Mathematically optimal growth rate given accurate `p_true`. Half-Kelly cuts vari
 
 **Key Risks**
 Edge estimate error is catastrophic — overestimating `p_true` leads to severe overbetting. Win rate estimates from small samples have high variance. Full Kelly (k=1.0) produces extreme volatility and is not recommended.
+
+> **Macro Context Integration:** Two automatic enhancements apply when FRED data is cached:
+> 1. **FRED Prior:** For economic markets (e.g., "Will CPI exceed 3.5%?"), the system derives a `p_true` estimate from FRED trend extrapolation and uses it instead of the internal win-rate estimate — but only when confidence ≥ 0.4. See [§8.6](#86-fred-prior-calculator-kelly-calibration).
+> 2. **Kelly Caution:** In high-risk macro regimes (inverted yield curve, tightening cycle), `kelly_fraction` is multiplied by a caution factor (0.70–0.75×) to reduce sizing. See [§8.5](#85-strategy-modifiers-applied-automatically).
 
 ---
 
@@ -810,6 +851,7 @@ Complete this checklist before switching any strategy to Auto execution:
 [ ] Start with a small account size — scale up only after live validation
 [ ] Keep STOP_LOSS_ENABLED=true (do not disable in production)
 [ ] Set stop_loss on every signal before approving in Confirm mode
+[ ] Seed the FRED cache (see §8.3) — strategies improve with macro context available
 ```
 
 ---
@@ -825,6 +867,17 @@ Every signal is dispatched in one of three modes, configurable per strategy or p
 | **Alert Only** | Signal is logged to the alerts feed; no order is placed | Research and monitoring only |
 
 > **Recommendation:** Run all new strategies in **Confirm** mode for at least 20 trades before switching to Auto. Review every approval to build intuition about signal quality.
+
+#### Where to Find Your Order After Approving (Coinbase)
+
+When you approve a signal in **Confirm** mode on Coinbase, the order is placed as a **GTC limit order** (Good Till Cancelled) at the signal's entry price — not a market order. This means:
+
+- The order will **not appear in your wallet/portfolio** until it fills.
+- Until filled, it sits in **Open Orders** under the Advanced Trade order management screen.
+- If the market price never reaches the limit price, the order remains open indefinitely until you cancel it manually on Coinbase.
+- Once filled, the position will appear in your Coinbase portfolio and the PolyBack Positions screen will reflect the live price.
+
+> **Tip:** After approving a Coinbase signal in PolyBack, check **Coinbase Advanced Trade → Orders → Open Orders** to confirm the order was received. If the price has already moved past your limit, the order may fill immediately and appear directly in your portfolio.
 
 ---
 
@@ -975,24 +1028,86 @@ curl -X POST http://localhost:8000/api/positions/risk/resume \
 
 ---
 
-### 5.6 SQLite Persistence
+### 5.6 Database Persistence
 
-All positions and signals are persisted to `polyback.db` at the project root. State survives backend restarts.
+PolyBack supports two database backends: **SQLite** (default, zero-config) and **PostgreSQL** (recommended for production). Both persist the same data.
 
 | What Is Persisted | What Is Not Persisted |
 |-------------------|-----------------------|
-| Open positions (with current price) | Session drawdown counter (resets on restart) |
-| Closed positions and realized PnL | System halt state (resets on restart) |
-| Pending signals (awaiting approval) | In-memory price cache |
+| Open positions (with current price) | In-memory price cache |
+| Closed positions and realized PnL | |
+| Pending signals (awaiting approval) | |
 | Executed and rejected signals | |
+| System halt state and session PnL | |
 
-> **On restart after a crash:** Open positions reload from the database. However, the session drawdown counter resets to zero and any halt state is cleared. Review open positions immediately after an unexpected restart to ensure stop-loss levels are still appropriate.
+> **On restart after a crash:** All positions, signals, and risk state reload from the database automatically. If the system was halted before the restart, it will still be halted on startup — a warning is logged and trading will not resume until manually cleared via `/api/positions/risk/resume`.
 
-The database file should be backed up regularly:
+---
 
+#### Option A — SQLite (default)
+
+Zero setup required. State is stored in `polyback.db` at the project root. Suitable for single-user, single-process use.
+
+**Backup:**
 ```bash
 cp ~/quant_project/Polymarket/polyback.db ~/backups/polyback_$(date +%Y%m%d).db
 ```
+
+No changes to `.env` needed — SQLite is used automatically when `DATABASE_URL` is not set.
+
+---
+
+#### Option B — PostgreSQL
+
+Recommended when the agent team or other services need to query trade data, or for any multi-process setup.
+
+**1. Install PostgreSQL (Ubuntu/Debian):**
+```bash
+sudo apt update && sudo apt install -y postgresql postgresql-contrib
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+```
+
+**2. Create the database and user:**
+```bash
+sudo -u postgres psql -c "CREATE USER polyback WITH PASSWORD 'your-password';"
+sudo -u postgres psql -c "CREATE DATABASE polyback_db OWNER polyback;"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE polyback_db TO polyback;"
+```
+
+**3. Install the Python driver (in the project venv):**
+```bash
+cd ~/quant_project/Polymarket
+source venv/bin/activate
+pip install psycopg2-binary
+```
+
+**4. Add the connection string to `backend/.env`:**
+```
+DATABASE_URL=postgresql://polyback:your-password@localhost:5432/polyback_db
+```
+
+**5. Restart the backend.** Tables are created automatically on startup.
+
+**Agent team schema isolation:**
+A separate `agents` schema exists in `polyback_db` for agent side projects. Agent tables should be created under `agents.*` to avoid collisions with PolyBack tables.
+
+```sql
+-- Example: agent team creating their own table
+CREATE TABLE agents.my_table (...);
+```
+
+**Backup:**
+```bash
+PGPASSWORD=your-password pg_dump -U polyback -h localhost polyback_db > ~/backups/polyback_$(date +%Y%m%d).sql
+```
+
+**Migrating existing data from SQLite:**
+If you have trade history in `polyback.db` you want to preserve, export it before switching:
+```bash
+sqlite3 polyback.db .dump > polyback_sqlite_dump.sql
+```
+Then manually insert the relevant rows into PostgreSQL — the schema is identical.
 
 ---
 
@@ -1206,11 +1321,11 @@ curl -s http://localhost:8000/api/positions/risk/status | python3 -m json.tool
 
 | Question | Answer |
 |----------|--------|
-| Where is the database? | `~/quant_project/Polymarket/polyback.db` |
-| Positions lost after restart? | No — positions persist in SQLite |
-| Session drawdown reset after restart? | Yes — intentional, requires manual review |
-| Halt state reset after restart? | Yes — intentional |
-| How to back up the database? | `cp polyback.db ~/backups/polyback_$(date +%Y%m%d).db` |
+| Where is the database? | SQLite: `~/quant_project/Polymarket/polyback.db` · PostgreSQL: `polyback_db` (see §5.6) |
+| Positions lost after restart? | No — positions persist in the database |
+| Session drawdown reset after restart? | No — persisted to database since PostgreSQL migration |
+| Halt state reset after restart? | No — persisted to database; system stays halted across restarts |
+| How to back up the database? | SQLite: `cp polyback.db ~/backups/polyback_$(date +%Y%m%d).db` · PostgreSQL: `PGPASSWORD=your-password pg_dump -U polyback polyback_db > backup.sql` |
 
 ---
 
@@ -1510,3 +1625,291 @@ If this throws a `ValueError` or `cryptography` import error, the private key fo
 ---
 
 *PolyBack is a research, analysis, and live trading tool. Nothing in this guide constitutes financial advice. Prediction market trading involves real risk of financial loss. Always start with small position sizes and validate strategy performance before scaling.*
+
+---
+
+## 8. FRED Economic Data & Macro Context
+
+### 8.1 Overview
+
+PolyBack integrates Federal Reserve Economic Data (FRED) from the St. Louis Federal Reserve Bank to provide macroeconomic context for prediction market trading. Many Polymarket and Kalshi markets ask questions that are directly linked to economic indicators — Fed rate decisions, CPI readings, unemployment levels, GDP growth. FRED data gives you an evidence-based anchor for these markets instead of relying on intuition.
+
+**What FRED adds to PolyBack:**
+
+| Feature | Benefit |
+|---------|---------|
+| Macro regime detection | Know when you're in a tightening cycle, recession risk zone, or inflation spike |
+| Z-score threshold widening | Automatically widen entry thresholds in volatile macro environments |
+| Kelly `p_true` calibration | For economic markets, derive a data-backed probability estimate instead of guessing |
+| XGBoost features | 5 normalised macro features added to every model training run |
+
+FRED data is cached locally after each pull and reused from the database. Normal operation requires **zero ongoing API calls** — data refreshes automatically when stale (weekly or monthly, depending on the series).
+
+**FRED API key:** Add `FRED_API_KEY=your_key` to `.env`. Register for a free key at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html). The free tier allows 100 API calls, which covers months of operation at normal refresh rates.
+
+---
+
+### 8.2 Tracked Series
+
+Eight series are tracked. Each pull costs 2 API calls (metadata + observations).
+
+| Series ID | Name | Frequency | Refresh | Release Lag |
+|-----------|------|-----------|---------|-------------|
+| `CPIAUCSL` | CPI — All Urban Consumers | Monthly | Monthly | ~16 days |
+| `UNRATE` | Unemployment Rate | Monthly | Monthly | ~5 days |
+| `PAYEMS` | Nonfarm Payrolls | Monthly | Monthly | ~5 days |
+| `FEDFUNDS` | Fed Funds Rate (monthly avg) | Monthly | Monthly | ~10 days |
+| `DFEDTARU` | Fed Funds Target Upper Bound | Daily | Weekly | 1 day |
+| `GDP` | Real GDP | Quarterly | Quarterly | ~30 days |
+| `T10Y2Y` | 10Y-2Y Treasury Spread | Daily | Weekly | 1 day |
+| `DTWEXBGS` | US Dollar Index (Broad) | Weekly | Weekly | ~3 days |
+
+**Pull budget:** 100 API calls total on the free tier. 8 series × 2 calls = 16 calls for a full initial seed. A warning appears at 80 calls used; pulls are blocked at 95.
+
+Check remaining budget:
+
+```bash
+curl http://localhost:8000/api/fred/budget
+```
+
+---
+
+### 8.3 Initial Data Pull
+
+The FRED cache is empty on first run. Seed all 8 series before expecting macro context to work. Each `refresh` call burns 2 API calls:
+
+```bash
+for series in CPIAUCSL UNRATE PAYEMS FEDFUNDS DFEDTARU GDP T10Y2Y DTWEXBGS; do
+  echo "Pulling $series..."
+  curl -s -X POST "http://localhost:8000/api/fred/$series/refresh" \
+    | python3 -m json.tool | grep -E '"series_id"|"count"|"pull_count"'
+  echo ""
+done
+```
+
+**Total cost: 16 API calls** (2 per series × 8 series). After this, refreshes happen automatically when the cache becomes stale — you should never need to run this again unless data is missing.
+
+> If `FRED_API_KEY` is not set, the refresh will return a 503 error. Add the key to `.env` and restart the backend first.
+
+---
+
+### 8.4 Macro Context
+
+The macro context engine reads the FRED cache and computes the current macroeconomic regime. No API calls are made — it is purely derived from cached data and is safe to call any time.
+
+```bash
+curl http://localhost:8000/api/fred/macro-context
+```
+
+**Response structure:**
+
+```json
+{
+  "regime": {
+    "recession_risk":  "low",
+    "fed_stance":      "easing",
+    "inflation_level": "at_target",
+    "inflation_trend": "falling",
+    "labor_market":    "strong",
+    "dollar_trend":    "neutral"
+  },
+  "values": {
+    "yield_spread":  0.42,
+    "fed_rate":      4.75,
+    "cpi_yoy":       2.8,
+    "unemployment":  3.9
+  },
+  "strategy_modifiers": {
+    "zscore_multiplier": 1.0,
+    "kelly_caution":     1.0
+  },
+  "xgb_features": [0.21, 0.44, 0.10, -0.05, 0.0],
+  "meta": {
+    "has_data":     true,
+    "data_quality": "full"
+  }
+}
+```
+
+#### Regime Definitions
+
+**Recession Risk** (from T10Y2Y yield spread):
+
+| Signal | Spread | Meaning |
+|--------|--------|---------|
+| `low` | ≥ 0.0% | Normal yield curve |
+| `medium` | −0.5% to 0.0% | Yield curve flattening — watch carefully |
+| `high` | < −0.5% | Inverted yield curve — historical recession predictor |
+
+**Fed Stance** (from DFEDTARU, 12-period comparison):
+
+| Signal | Condition |
+|--------|-----------|
+| `tightening` | Current rate > 12 periods ago by > 0.1% |
+| `easing` | Current rate < 12 periods ago by > 0.1% |
+| `neutral` | No significant change |
+
+**Inflation Level** (from CPIAUCSL YoY % change):
+
+| Signal | YoY CPI |
+|--------|---------|
+| `above_target` | > 3.0% |
+| `at_target` | 1.5%–3.0% |
+| `below_target` | < 1.5% |
+
+**Labor Market** (from UNRATE):
+
+| Signal | Rate |
+|--------|------|
+| `strong` | < 4.0% |
+| `weakening` | 4.0%–5.0% |
+| `weak` | > 5.0% |
+
+---
+
+### 8.5 Strategy Modifiers (Applied Automatically)
+
+When a backtest runs, macro context is loaded from the cache and two modifiers are injected into every strategy automatically. No configuration is required.
+
+#### Z-Score Multiplier
+
+Multiplies the user's `Entry Z-Score` before evaluating entries.
+
+| Recession Risk | Multiplier | Example (z_entry = 1.5) |
+|----------------|-----------|------------------------|
+| `low` | 1.0× | Effective threshold: −1.50 |
+| `medium` | 1.15× | Effective threshold: −1.73 |
+| `high` | 1.35× | Effective threshold: −2.03 |
+
+**Why:** In inverted yield curve environments, dislocations are more likely to represent genuine regime shifts than mean-reversion opportunities. Requiring a larger deviation before entering reduces false signals.
+
+#### Kelly Caution Factor
+
+Multiplies the user's `Kelly Fraction` before computing position size.
+
+| Condition | Caution | Example (kelly_fraction = 0.5) |
+|-----------|---------|-------------------------------|
+| Recession risk high | 0.70× | Effective fraction: 0.35 |
+| Tightening + above-target inflation | 0.75× | Effective fraction: 0.375 |
+| Easing + low recession risk | 1.0× | No reduction |
+
+**Why:** Kelly sizing is catastrophically sensitive to edge estimation error. Macro uncertainty makes edge estimates less reliable, so the system is automatically more conservative when the regime is unsettled.
+
+---
+
+### 8.6 FRED Prior Calculator (Kelly Calibration)
+
+For markets whose titles reference an economic threshold, the prior calculator derives a data-backed `p_true` estimate to replace Kelly's internal win-rate estimate.
+
+**Process:**
+
+1. Keywords in the market title are matched to a FRED series (e.g., "CPI" → `CPIAUCSL`)
+2. A numeric threshold is extracted (e.g., "3.5%")
+3. Direction is inferred from wording ("exceed" → above, "fall below" → below)
+4. A linear trend is fit to the last 6 cached observations
+5. One period is extrapolated forward
+6. P(extrapolated > threshold) is computed using the normal distribution
+
+**Try it directly:**
+
+```bash
+curl -s -X POST http://localhost:8000/api/fred/prior \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Will CPI exceed 3.5% in June?"}' | python3 -m json.tool
+```
+
+**Example response:**
+
+```json
+{
+  "series_id":  "CPIAUCSL",
+  "p_true":     0.142,
+  "confidence": 0.87,
+  "method":     "linear_trend_extrapolation",
+  "details": {
+    "extrapolated": 2.81,
+    "threshold":    3.5,
+    "direction":    "above",
+    "sigma":        0.112,
+    "n_obs":        12
+  }
+}
+```
+
+**Confidence thresholds:**
+
+| Confidence | Meaning |
+|------------|---------|
+| ≥ 0.7 | Strong estimate — used as primary p_true |
+| 0.4–0.7 | Reasonable — used as guide |
+| < 0.4 | Insufficient data — Kelly falls back to internal win rate |
+
+**Supported market types:**
+
+| Market asks about... | FRED series matched |
+|---------------------|---------------------|
+| CPI, inflation rate, consumer price | `CPIAUCSL` (auto-converted to YoY %) |
+| Unemployment rate, jobless | `UNRATE` |
+| Fed rate, FOMC, rate cut/hike | `DFEDTARU` |
+| GDP, gross domestic product | `GDP` |
+| Nonfarm payrolls, jobs added | `PAYEMS` |
+| Yield spread, yield curve, inverted | `T10Y2Y` |
+| Dollar index | `DTWEXBGS` |
+
+> **CPI note:** `CPIAUCSL` stores the raw index (~315). When a market asks about a percentage threshold (< 20), the calculator automatically converts to year-over-year % change before running the estimate. No manual conversion needed.
+
+---
+
+### 8.7 XGBoost Macro Features
+
+When running the XGBoost strategy, five normalised FRED features are automatically appended to the feature vector (total: 16 base + 5 macro = 21 features). This gives the model macroeconomic context alongside the market's probability history.
+
+| Feature | Source | Scale |
+|---------|--------|-------|
+| Yield spread | T10Y2Y | ÷ 2.0 |
+| Fed rate deviation | DFEDTARU | (rate − 3.0) ÷ 4.0 |
+| Inflation deviation | CPIAUCSL YoY | (cpi_yoy − 2.5) ÷ 3.0 |
+| Unemployment deviation | UNRATE | (ur − 4.0) ÷ 2.0 |
+| Dollar 1yr change | DTWEXBGS | (1yr % change) ÷ 5.0 |
+
+All features are scaled to approximately [−1, +1] to blend cleanly with the existing probability features.
+
+> **Note:** Models trained with macro features (21-feature) are not directly comparable to models trained without them (16-feature). Retrain after seeding the cache for the first time.
+
+---
+
+### 8.8 FRED Dashboard
+
+A cache-only snapshot of all tracked series — zero API cost, safe to call any time.
+
+```bash
+curl http://localhost:8000/api/fred/dashboard | python3 -m json.tool
+```
+
+Returns the latest and previous observation for each series, the period-to-period change, and a `stale` flag indicating whether a refresh is due. Use this to quickly check whether your FRED data is current before a trading session.
+
+---
+
+### 8.9 API Reference
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/fred/macro-context` | GET | Current regime + strategy modifiers (cache only) |
+| `/api/fred/prior` | POST | FRED-calibrated p_true for a market title |
+| `/api/fred/dashboard` | GET | Latest values for all 8 series (cache only) |
+| `/api/fred/{series_id}` | GET | Full observation history for one series (cache-first) |
+| `/api/fred/{series_id}/refresh` | POST | Force a fresh pull from FRED (costs 2 budget calls) |
+| `/api/fred/budget` | GET | API call usage vs. 100-call free tier |
+| `/api/fred/series` | GET | List all tracked series with metadata |
+
+---
+
+### 8.10 Troubleshooting FRED
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `macro-context` returns all `"unknown"` | FRED cache is empty | Run the initial data pull (§8.3) |
+| `/refresh` returns 503 "FRED_API_KEY not set" | Key missing from `.env` | Add `FRED_API_KEY=your_key` and restart backend |
+| `/refresh` returns 503 "budget nearly exhausted" | > 95 of 100 free calls used | Upgrade to a paid FRED plan at fred.stlouisfed.org |
+| `p_true` is `null` after `/prior` call | No series matched, or no threshold found in title | Check that the title contains a FRED keyword and a `%` figure |
+| `data_quality: "partial"` in macro-context | Some series not yet cached | Run `refresh` for the missing series |

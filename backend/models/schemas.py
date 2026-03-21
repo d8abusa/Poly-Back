@@ -88,6 +88,27 @@ class BacktestRequest(BaseModel):
     # Market Making
     mm_spread: float = Field(0.04, ge=0.01, le=0.20)
 
+    # XGBoost
+    xgb_n_estimators:  int   = Field(330,  ge=10,  le=1000)
+    xgb_learning_rate: float = Field(0.1,  ge=0.01, le=0.5)
+    xgb_max_depth:     int   = Field(3,    ge=1,   le=8)
+    xgb_train_frac:    float = Field(0.30, ge=0.10, le=0.70)
+    xgb_retrain_every: int   = Field(20,   ge=5,   le=100)
+    xgb_confidence:    float = Field(0.55, ge=0.50, le=0.90)
+
+    # FRED macro context — injected server-side, not sent from the frontend.
+    # Strategies read these to modulate thresholds and sizing.
+    fred_p_true:        Optional[float] = Field(None, ge=0.05, le=0.95,
+                            description="FRED-calibrated true probability for Kelly (overrides internal estimate)")
+    fred_confidence:    Optional[float] = Field(None, ge=0.0, le=1.0,
+                            description="Confidence in fred_p_true (0–1); used only when >= 0.4")
+    macro_zscore_mult:  float = Field(1.0, ge=1.0, le=2.0,
+                            description="Widen zscore_entry by this factor (from MacroContext)")
+    macro_kelly_caution: float = Field(1.0, ge=0.0, le=1.0,
+                            description="Scale down kelly_fraction by this factor (from MacroContext)")
+    macro_features:     List[float] = Field(default_factory=list,
+                            description="Normalised FRED feature vector appended to XGBoost features")
+
 
 class BatchMarketInput(BaseModel):
     condition_id: str
@@ -146,6 +167,13 @@ class BatchBacktestRequest(BaseModel):
     initial_capital: float = 1000.0
     interval: str = "max"
     execution_mode: ExecutionMode = ExecutionMode.confirm
+    # XGBoost params
+    xgb_n_estimators:  int   = 330
+    xgb_learning_rate: float = 0.1
+    xgb_max_depth:     int   = 3
+    xgb_train_frac:    float = 0.30
+    xgb_retrain_every: int   = 20
+    xgb_confidence:    float = 0.55
 
 
 class BacktestResult(BaseModel):
