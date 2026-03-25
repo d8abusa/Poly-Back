@@ -1,5 +1,5 @@
 """
-Position store — backed by SQLite with an in-memory cache.
+Position store — backed by PostgreSQL with an in-memory cache.
 
 Same public API as before; state now survives backend restarts.
 """
@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..models.schemas import SignalSchema
-from .db import get_conn, row_to_dict
+from .db import get_cursor, row_to_dict
 
 
 # ── In-memory cache (populated on first access) ───────────────────────────────
@@ -23,8 +23,9 @@ def _ensure_loaded() -> None:
     global _loaded
     if _loaded:
         return
-    with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM positions ORDER BY entry_date ASC").fetchall()
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM positions ORDER BY entry_date ASC")
+        rows = cur.fetchall()
     for row in rows:
         d = row_to_dict(row)
         if d["status"] == "open":
@@ -36,7 +37,7 @@ def _ensure_loaded() -> None:
 
 # ── Mutations ─────────────────────────────────────────────────────────────────
 
-def open_position(signal: SignalSchema, category: str = "Other") -> dict:
+def open_position(signal: SignalSchema, category: str = "Other", exchange: str = "coinbase") -> dict:
     _ensure_loaded()
     pos = {
         "id":           str(uuid.uuid4()),
@@ -58,17 +59,20 @@ def open_position(signal: SignalSchema, category: str = "Other") -> dict:
         "exit_prob":    None,
         "close_reason": None,
         "realized_pnl": None,
+        "exchange":     exchange,
     }
-    with get_conn() as conn:
-        conn.execute("""
+    with get_cursor() as cur:
+        cur.execute("""
             INSERT INTO positions
                 (id, signal_id, market_id, market_title, category, strategy, side,
                  entry_price, current_prob, exit_target, stop_loss, shares, capital,
-                 status, entry_date, closed_at, exit_prob, close_reason, realized_pnl)
+                 status, entry_date, closed_at, exit_prob, close_reason, realized_pnl,
+                 exchange)
             VALUES
-                (:id, :signal_id, :market_id, :market_title, :category, :strategy, :side,
-                 :entry_price, :current_prob, :exit_target, :stop_loss, :shares, :capital,
-                 :status, :entry_date, :closed_at, :exit_prob, :close_reason, :realized_pnl)
+                (%(id)s, %(signal_id)s, %(market_id)s, %(market_title)s, %(category)s,
+                 %(strategy)s, %(side)s, %(entry_price)s, %(current_prob)s, %(exit_target)s,
+                 %(stop_loss)s, %(shares)s, %(capital)s, %(status)s, %(entry_date)s,
+                 %(closed_at)s, %(exit_prob)s, %(close_reason)s, %(realized_pnl)s, %(exchange)s)
         """, pos)
     _open[pos["id"]] = pos
     return pos
@@ -89,9 +93,9 @@ def update_prob(position_id: str, prob: float) -> Optional[dict]:
     pos = _open.get(position_id)
     if pos is not None:
         pos["current_prob"] = max(0.01, min(0.99, prob))
-        with get_conn() as conn:
-            conn.execute(
-                "UPDATE positions SET current_prob=? WHERE id=?",
+        with get_cursor() as cur:
+            cur.execute(
+                "UPDATE positions SET current_prob=%s WHERE id=%s",
                 (pos["current_prob"], position_id),
             )
     return pos
@@ -112,12 +116,12 @@ def close_position(position_id: str, close_reason: str = "manual") -> Optional[d
     pos["exit_prob"]    = round(exit_prob, 4)
     pos["close_reason"] = close_reason
     pos["realized_pnl"] = round(pnl, 4)
-    with get_conn() as conn:
-        conn.execute("""
+    with get_cursor() as cur:
+        cur.execute("""
             UPDATE positions
-            SET status=:status, closed_at=:closed_at, exit_prob=:exit_prob,
-                close_reason=:close_reason, realized_pnl=:realized_pnl
-            WHERE id=:id
+            SET status=%(status)s, closed_at=%(closed_at)s, exit_prob=%(exit_prob)s,
+                close_reason=%(close_reason)s, realized_pnl=%(realized_pnl)s
+            WHERE id=%(id)s
         """, pos)
     _closed.append(pos)
     return pos

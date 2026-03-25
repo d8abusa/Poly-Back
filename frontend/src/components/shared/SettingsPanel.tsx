@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { THEMES, applyTheme, getActiveThemeId } from "../../theme";
+import CronToggle from "./CronToggle";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -90,8 +92,6 @@ function AuthBadge({ level }: { level: string }) {
   );
 }
 
-// ── Credential field row ──────────────────────────────────────────────────────
-
 function CredField({
   fieldKey, label, hint, status, value, onChange, onClear,
 }: {
@@ -163,8 +163,6 @@ function CredField({
     </div>
   );
 }
-
-// ── Exchange section ──────────────────────────────────────────────────────────
 
 function ExchangeSection({
   exKey, status, onSaved,
@@ -303,7 +301,6 @@ function ExchangeSection({
   );
 }
 
-// Map env key format → JSON body key expected by the backend
 function _fieldKeyToBodyKey(exchange: ExchangeKey, envKey: string): string {
   const maps: Record<ExchangeKey, Record<string, string>> = {
     coinbase: {
@@ -321,12 +318,26 @@ function _fieldKeyToBodyKey(exchange: ExchangeKey, envKey: string): string {
   return maps[exchange][envKey] ?? envKey.toLowerCase();
 }
 
+function SystemSection({ cronEnabled, cronSaving, onToggle }: { cronEnabled: boolean; cronSaving: boolean; onToggle: () => void }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: "#606880", lineHeight: 1.6, background: "rgba(123,97,255,0.05)", border: "1px solid rgba(123,97,255,0.15)", borderRadius: 7, padding: "10px 14px", marginBottom: 16 }}>
+        Configure automated scheduled tasks. When enabled, the system will run backtests and monitor signals at the defined intervals.
+      </div>
+      <CronToggle enabled={cronEnabled} disabled={cronSaving} onToggle={onToggle} />
+    </div>
+  );
+}
+
 // ── Main SettingsPanel ────────────────────────────────────────────────────────
 
 export default function SettingsPanel({ onClose }: SettingsPanelProps) {
-  const [settings, setSettings] = useState<AllSettings | null>(null);
-  const [loading,  setLoading]  = useState(true);
-  const [section,  setSection]  = useState<"credentials" | "about">("credentials");
+  const [settings,       setSettings]       = useState<AllSettings | null>(null);
+  const [loading,        setLoading]        = useState(true);
+  const [section,        setSection]        = useState<"credentials" | "appearance" | "system" | "about">("credentials");
+  const [activeThemeId,  setActiveThemeId]  = useState(getActiveThemeId);
+  const [cronEnabled,    setCronEnabled]    = useState(false);
+  const [cronSaving,     setCronSaving]     = useState(false);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -334,10 +345,43 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       .then(setSettings)
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    // Check cron status
+    checkCronStatus();
   }, []);
 
-  const updateExchange = (ex: ExchangeKey, updated: ExchangeStatus) => {
-    setSettings(prev => prev ? { ...prev, [ex]: updated } : prev);
+  useEffect(() => {
+    // Watch for cron state changes across tabs
+    if (typeof window !== "undefined") {
+      const handleStorage = () => checkCronStatus();
+      window.addEventListener("storage", handleStorage);
+      return () => window.removeEventListener("storage", handleStorage);
+    }
+  }, []);
+
+  const checkCronStatus = () => {
+    fetch("/api/cron/status")
+      .then(r => r.json())
+      .then(data => setCronEnabled(data.enabled))
+      .catch(() => {});
+  };
+
+  const toggleCron = async () => {
+    setCronSaving(true);
+    try {
+      const action = cronEnabled ? "disable" : "enable";
+      const resp = await fetch(`/api/cron/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schedule: "0 * * * *" }), // Hourly by default
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      await checkCronStatus();
+    } catch (e: any) {
+      alert(`Failed to ${action} cron: ${e.message}`);
+    } finally {
+      setCronSaving(false);
+    }
   };
 
   return (
@@ -363,7 +407,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           <div style={{ width: 30, height: 30, borderRadius: 7, background: "rgba(123,97,255,0.15)", border: "1px solid rgba(123,97,255,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⚙</div>
           <div>
             <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 16, color: "#e8eaf0" }}>Settings</div>
-            <div style={{ fontSize: 10, color: "#606880", marginTop: 1 }}>API keys · credentials · exchange config</div>
+            <div style={{ fontSize: 10, color: "#606880", marginTop: 1 }}>API keys · credentials · automation</div>
           </div>
           <button
             onClick={onClose}
@@ -375,7 +419,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
         {/* Sub-nav */}
         <div style={{ display: "flex", gap: 2, padding: "10px 24px", borderBottom: "1px solid #1e2330", flexShrink: 0 }}>
-          {(["credentials", "about"] as const).map(s => (
+          {(["credentials", "appearance", "system", "about"] as const).map(s => (
             <button
               key={s}
               onClick={() => setSection(s)}
@@ -416,6 +460,72 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 <div style={{ color: "#ef4444", fontSize: 12 }}>Failed to load settings — is the backend running?</div>
               )}
             </>
+          )}
+
+          {section === "appearance" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 11, color: "#606880", lineHeight: 1.6, background: "rgba(123,97,255,0.05)", border: "1px solid rgba(123,97,255,0.15)", borderRadius: 7, padding: "10px 14px", marginBottom: 8 }}>
+                Choose a color scheme. Changes apply instantly and persist across sessions.
+              </div>
+              {THEMES.map(theme => {
+                const active = theme.id === activeThemeId;
+                return (
+                  <div
+                    key={theme.id}
+                    onClick={() => { applyTheme(theme); setActiveThemeId(theme.id); }}
+                    style={{
+                      background: active ? "rgba(0,163,224,0.06)" : "#111318",
+                      border: `1px solid ${active ? "rgba(0,163,224,0.4)" : "#1e2330"}`,
+                      borderRadius: 10,
+                      padding: "16px 20px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 16,
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {/* Swatch preview */}
+                    <div style={{ display: "flex", gap: 0, borderRadius: 8, overflow: "hidden", flexShrink: 0, border: "1px solid #252d3d" }}>
+                      {theme.swatch.map((c, i) => (
+                        <div key={i} style={{ width: 28, height: 44, background: c }} />
+                      ))}
+                    </div>
+
+                    {/* Info */}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 14, color: "#e8eaf0", marginBottom: 3 }}>
+                        {theme.name}
+                        {active && (
+                          <span style={{ marginLeft: 8, fontSize: 9, padding: "1px 7px", borderRadius: 3, background: "rgba(0,163,224,0.15)", color: "#00a3e0", border: "1px solid rgba(0,163,224,0.3)", verticalAlign: "middle" }}>
+                            ACTIVE
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#606880" }}>{theme.desc}</div>
+                    </div>
+
+                    {/* Select indicator */}
+                    <div style={{
+                      width: 18, height: 18, borderRadius: "50%", flexShrink: 0,
+                      border: `2px solid ${active ? "#00a3e0" : "#252d3d"}`,
+                      background: active ? "#00a3e0" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {active && <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#000f2e" }} />}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {section === "system" && (
+            <SystemSection
+              cronEnabled={cronEnabled}
+              cronSaving={cronSaving}
+              onToggle={toggleCron}
+            />
           )}
 
           {section === "about" && (

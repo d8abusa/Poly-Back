@@ -22,6 +22,7 @@ async def search_markets(
     closed:   Optional[bool] = Query(None),
     order:    str            = Query("volumeNum"),
     tag_slug: Optional[str]  = Query(None),
+    category: Optional[str]  = Query(None),
     client: BaseExchangeClient = Depends(_get_client),
 ):
     kwargs: dict = {}
@@ -29,14 +30,16 @@ async def search_markets(
     if closed   is not None: kwargs["closed"]   = closed
     if order:                kwargs["order"]    = order
     if tag_slug:             kwargs["tag_slug"] = tag_slug
+    if category:             kwargs["category"] = category
 
     try:
-        raw = await client.search_markets(limit=limit, offset=offset, **kwargs)
+        raw = await client.search_markets(limit=limit, offset=offset, q=q, **kwargs)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Exchange error ({exchange}): {e}")
     markets = [client.normalize_market(m) for m in raw]
 
-    if q:
+    # Post-filter for exchanges that don't handle q natively
+    if q and exchange != "yahoo":
         ql = q.lower()
         markets = [
             m for m in markets
@@ -51,8 +54,10 @@ async def list_exchanges():
     """List all supported exchanges."""
     return {
         "exchanges": [
-            {"id": "polymarket", "name": "Polymarket",       "type": "real_money", "description": "Decentralized prediction market on Polygon"},
             {"id": "kalshi",     "name": "Kalshi",           "type": "real_money", "description": "CFTC-regulated US prediction market exchange"},
+            {"id": "coinbase",   "name": "Coinbase",         "type": "real_money", "description": "Coinbase Advanced Trade — crypto spot markets"},
+            {"id": "yahoo",      "name": "Stocks (Yahoo)",   "type": "market_data","description": "US stock market data via Yahoo Finance"},
+            {"id": "polymarket", "name": "Polymarket",       "type": "real_money", "description": "Decentralized prediction market on Polygon"},
             {"id": "manifold",   "name": "Manifold Markets", "type": "play_money", "description": "Open-source AMM platform — ideal for strategy research"},
         ]
     }

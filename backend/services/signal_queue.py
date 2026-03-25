@@ -1,5 +1,5 @@
 """
-Signal queue — backed by SQLite with an in-memory cache.
+Signal queue — backed by PostgreSQL with an in-memory cache.
 
 Same public API as before; state now survives backend restarts.
 CONFIRM-mode signals persist across restarts so no pending approvals are lost.
@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..models.schemas import SignalSchema
-from .db import get_conn, signal_to_row
+from .db import get_cursor, signal_to_row
 
 
 # ── In-memory cache ───────────────────────────────────────────────────────────
@@ -26,8 +26,9 @@ def _ensure_loaded() -> None:
     global _loaded
     if _loaded:
         return
-    with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM signals ORDER BY created_at ASC").fetchall()
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM signals ORDER BY created_at ASC")
+        rows = cur.fetchall()
     for row in rows:
         d = dict(row)
         payload = json.loads(d.get("payload") or "{}")
@@ -46,21 +47,22 @@ def _ensure_loaded() -> None:
 
 def _upsert(sig: SignalSchema) -> None:
     row = signal_to_row(sig)
-    with get_conn() as conn:
-        conn.execute("""
+    with get_cursor() as cur:
+        cur.execute("""
             INSERT INTO signals
                 (id, status, market_id, market_title, strategy, side, entry_price,
                  target_price, stop_loss, suggested_size, suggested_shares,
                  execution_mode, created_at, resolved_at, payload)
             VALUES
-                (:id, :status, :market_id, :market_title, :strategy, :side, :entry_price,
-                 :target_price, :stop_loss, :suggested_size, :suggested_shares,
-                 :execution_mode, :created_at, :resolved_at, :payload)
-            ON CONFLICT(id) DO UPDATE SET
-                status=excluded.status,
-                resolved_at=excluded.resolved_at,
-                suggested_size=excluded.suggested_size,
-                payload=excluded.payload
+                (%(id)s, %(status)s, %(market_id)s, %(market_title)s, %(strategy)s,
+                 %(side)s, %(entry_price)s, %(target_price)s, %(stop_loss)s,
+                 %(suggested_size)s, %(suggested_shares)s, %(execution_mode)s,
+                 %(created_at)s, %(resolved_at)s, %(payload)s)
+            ON CONFLICT (id) DO UPDATE SET
+                status=EXCLUDED.status,
+                resolved_at=EXCLUDED.resolved_at,
+                suggested_size=EXCLUDED.suggested_size,
+                payload=EXCLUDED.payload
         """, row)
 
 

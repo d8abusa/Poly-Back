@@ -39,9 +39,25 @@ interface LiveFeedProps {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function pct(v: number | null) {
+type PriceMode = 'prob' | 'stock' | 'crypto';
+
+function pct(v: number | null, mode: PriceMode = 'prob') {
   if (v === null || v === undefined) return "—";
+  if (mode === 'stock') return `$${v.toFixed(2)}`;
+  if (mode === 'crypto') {
+    if (v >= 1000)   return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (v >= 1)      return `$${v.toFixed(2)}`;
+    if (v >= 0.01)   return `$${v.toFixed(4)}`;
+    if (v >= 0.0001) return `$${v.toFixed(6)}`;
+    return `$${v.toFixed(8)}`;
+  }
   return `${(v * 100).toFixed(1)}¢`;
+}
+
+function priceMode(exchange: string): PriceMode {
+  if (exchange === 'yahoo')    return 'stock';
+  if (exchange === 'coinbase') return 'crypto';
+  return 'prob';
 }
 
 function fmtSize(v: number) {
@@ -59,19 +75,21 @@ const POLL_MS = 8000;
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function StatBar({ snap }: { snap: Snapshot }) {
+function StatBar({ snap, mode }: { snap: Snapshot; mode: PriceMode }) {
   const statusColor = snap.market.closed ? "#ef4444" : snap.market.active ? "#22c55e" : "#f59e0b";
   const statusLabel = snap.market.closed
     ? (snap.market.outcome ? `Resolved · ${snap.market.outcome}` : "Resolved")
     : snap.market.active ? "Active" : "Paused";
 
   const cells = [
-    { label: "Status",     value: statusLabel,             color: statusColor },
-    { label: "Last Trade", value: pct(snap.last_price),    color: "var(--text)" },
-    { label: "Midpoint",   value: pct(snap.midpoint),      color: "var(--accent)" },
-    { label: "Best Bid",   value: pct(snap.best_bid),      color: "#22c55e" },
-    { label: "Best Ask",   value: pct(snap.best_ask),      color: "#ef4444" },
-    { label: "Spread",     value: pct(snap.spread),        color: "var(--muted2)" },
+    { label: "Status",     value: statusLabel,                  color: statusColor },
+    { label: "Last Price", value: pct(snap.last_price, mode),   color: "var(--text)" },
+    { label: "Midpoint",   value: pct(snap.midpoint, mode),     color: "var(--accent)" },
+    ...(mode === 'prob' ? [
+      { label: "Best Bid",  value: pct(snap.best_bid),  color: "#22c55e" },
+      { label: "Best Ask",  value: pct(snap.best_ask),  color: "#ef4444" },
+      { label: "Spread",    value: pct(snap.spread),    color: "var(--muted2)" },
+    ] : []),
   ];
   if (snap.market.end_date) {
     cells.push({
@@ -93,13 +111,13 @@ function StatBar({ snap }: { snap: Snapshot }) {
   );
 }
 
-function OrderBook({ bids, asks }: { bids: OrderLevel[]; asks: OrderLevel[] }) {
+function OrderBook({ bids, asks, mode }: { bids: OrderLevel[]; asks: OrderLevel[]; mode: PriceMode }) {
   const maxSize = Math.max(...[...bids, ...asks].map(l => l.size), 1);
   const Row = ({ level, side }: { level: OrderLevel; side: "bid" | "ask" }) => {
     const color = side === "bid" ? "#22c55e" : "#ef4444";
     return (
       <div style={{ display: "grid", gridTemplateColumns: "56px 56px 1fr", gap: 6, padding: "3px 14px", alignItems: "center", fontFamily: "IBM Plex Mono, monospace", fontSize: 10 }}>
-        <span style={{ color }}>{pct(level.price)}</span>
+        <span style={{ color }}>{pct(level.price, mode)}</span>
         <span style={{ color: "var(--muted2)" }}>{fmtSize(level.size)}</span>
         <div style={{ position: "relative", height: 8 }}>
           <div style={{
@@ -128,7 +146,7 @@ function OrderBook({ bids, asks }: { bids: OrderLevel[]; asks: OrderLevel[] }) {
   );
 }
 
-function TradeStream({ trades }: { trades: Trade[] }) {
+function TradeStream({ trades, mode }: { trades: Trade[]; mode: PriceMode }) {
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "24px 56px 56px 1fr", gap: 6, padding: "6px 14px 4px", fontSize: 8, color: "var(--muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
@@ -142,7 +160,7 @@ function TradeStream({ trades }: { trades: Trade[] }) {
         return (
           <div key={i} style={{ display: "grid", gridTemplateColumns: "24px 56px 56px 1fr", gap: 6, padding: "3px 14px", alignItems: "center", fontFamily: "IBM Plex Mono, monospace", fontSize: 10, opacity: Math.max(0.35, 1 - i * 0.05) }}>
             <span style={{ color: isBuy ? "#22c55e" : "#ef4444", fontWeight: 700 }}>{isBuy ? "B" : "S"}</span>
-            <span style={{ color: isBuy ? "#22c55e" : "#ef4444" }}>{pct(t.price)}</span>
+            <span style={{ color: isBuy ? "#22c55e" : "#ef4444" }}>{pct(t.price, mode)}</span>
             <span style={{ color: "var(--muted2)" }}>{fmtSize(t.size)}</span>
             <span style={{ color: "var(--muted)" }}>{fmtTime(t.match_time)}</span>
           </div>
@@ -165,15 +183,17 @@ export default function LiveFeed({ markets, exchange }: LiveFeedProps) {
   const [error, setError]             = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch active markets independently for the feed
+  // Fetch active markets independently for the feed (not applicable for Yahoo)
   useEffect(() => {
+    if (exchange === "yahoo") { setActiveMarkets([]); return; }
     fetch(`/api/markets?limit=100&order=volumeNum&active=true&closed=false&exchange=${exchange}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => d?.markets && setActiveMarkets(d.markets))
       .catch(() => {});
   }, [exchange]);
 
-  const pool = showActive ? activeMarkets : markets;
+  // Yahoo doesn't have an active/inactive distinction — always use the full list
+  const pool = exchange === "yahoo" ? markets : (showActive ? activeMarkets : markets);
 
   const filtered = pool.filter(m => {
     if (!search) return true;
@@ -290,8 +310,8 @@ export default function LiveFeed({ markets, exchange }: LiveFeedProps) {
                   {m.title}
                 </div>
                 <div style={{ display: "flex", gap: 8, fontSize: 9, color: "var(--muted)", fontFamily: "IBM Plex Mono" }}>
-                  <span style={{ color: m.prob >= 0.6 ? "#22c55e" : m.prob <= 0.4 ? "#ef4444" : "var(--accent)" }}>
-                    {(m.prob * 100).toFixed(0)}¢
+                  <span style={{ color: priceMode(exchange) === 'prob' ? (m.prob >= 0.6 ? "#22c55e" : m.prob <= 0.4 ? "#ef4444" : "var(--accent)") : "var(--accent)" }}>
+                    {pct(m.prob, priceMode(exchange))}
                   </span>
                   <span>{m.category}</span>
                   {m.resolved && <span style={{ color: "#ef4444" }}>resolved</span>}
@@ -338,33 +358,42 @@ export default function LiveFeed({ markets, exchange }: LiveFeedProps) {
               </div>
             )}
 
-            {snapshot && (
-              <>
-                <StatBar snap={snapshot} />
+            {snapshot && (() => {
+              const mode = priceMode(exchange);
+              return (
+                <>
+                  <StatBar snap={snapshot} mode={mode} />
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", flex: 1, overflow: "hidden" }}>
-                  {/* Order book */}
-                  <div style={{ borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <div style={{ padding: "7px 14px", borderBottom: "1px solid var(--border)", fontSize: 9, color: "var(--muted)", letterSpacing: "0.12em", textTransform: "uppercase" as const, flexShrink: 0 }}>
-                      Order Book
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", flex: 1, overflow: "hidden" }}>
+                    {/* Order book */}
+                    <div style={{ borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                      <div style={{ padding: "7px 14px", borderBottom: "1px solid var(--border)", fontSize: 9, color: "var(--muted)", letterSpacing: "0.12em", textTransform: "uppercase" as const, flexShrink: 0 }}>
+                        Order Book
+                      </div>
+                      <div style={{ overflowY: "auto", flex: 1 }}>
+                        {mode !== 'prob' ? (
+                          <div style={{ padding: "24px 14px", color: "var(--muted)", fontSize: 10, fontFamily: "IBM Plex Mono" }}>
+                            Order book depth not available for this exchange.
+                          </div>
+                        ) : (
+                          <OrderBook bids={snapshot.bids} asks={snapshot.asks} mode={mode} />
+                        )}
+                      </div>
                     </div>
-                    <div style={{ overflowY: "auto", flex: 1 }}>
-                      <OrderBook bids={snapshot.bids} asks={snapshot.asks} />
+
+                    {/* Trade stream */}
+                    <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                      <div style={{ padding: "7px 14px", borderBottom: "1px solid var(--border)", fontSize: 9, color: "var(--muted)", letterSpacing: "0.12em", textTransform: "uppercase" as const, flexShrink: 0 }}>
+                        Recent Trades
+                      </div>
+                      <div style={{ overflowY: "auto", flex: 1 }}>
+                        <TradeStream trades={snapshot.recent_trades} mode={mode} />
+                      </div>
                     </div>
                   </div>
-
-                  {/* Trade stream */}
-                  <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <div style={{ padding: "7px 14px", borderBottom: "1px solid var(--border)", fontSize: 9, color: "var(--muted)", letterSpacing: "0.12em", textTransform: "uppercase" as const, flexShrink: 0 }}>
-                      Recent Trades
-                    </div>
-                    <div style={{ overflowY: "auto", flex: 1 }}>
-                      <TradeStream trades={snapshot.recent_trades} />
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
+                </>
+              );
+            })()}
 
             {!snapshot && !loading && !error && (
               <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>

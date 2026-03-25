@@ -21,22 +21,6 @@ interface ClosedPosition {
   close_reason: "target" | "stop_loss" | "manual" | "resolution";
 }
 
-// ─── Mock data (replace with GET /api/positions/closed) ──────────────────────
-
-const MOCK_HISTORY: ClosedPosition[] = [
-  { id: 1,  market: "Will the Fed cut rates at March 2025 FOMC?",       category: "Macro",      side: "YES", entry_prob: 0.34, exit_prob: 0.71, shares: 500, strategy: "Prob Drift",  opened_at: "2025-02-18T09:14:00", closed_at: "2025-03-04T14:32:00", realized_pnl:  185.00, close_reason: "target"     },
-  { id: 2,  market: "Will BTC exceed $100k before end of Feb?",          category: "Crypto",     side: "NO",  entry_prob: 0.62, exit_prob: 0.31, shares: 300, strategy: "Mean Rev",   opened_at: "2025-02-10T11:00:00", closed_at: "2025-02-28T16:10:00", realized_pnl:   93.00, close_reason: "target"     },
-  { id: 3,  market: "Will Nvidia stock exceed $175 in Q1 2025?",         category: "Equities",   side: "YES", entry_prob: 0.44, exit_prob: 0.38, shares: 400, strategy: "Momentum",   opened_at: "2025-02-20T08:30:00", closed_at: "2025-03-01T10:15:00", realized_pnl:  -24.00, close_reason: "stop_loss"  },
-  { id: 4,  market: "Will US unemployment exceed 4.5% in Q1?",           category: "Macro",      side: "NO",  entry_prob: 0.38, exit_prob: 0.22, shares: 600, strategy: "Anchor",     opened_at: "2025-02-14T13:00:00", closed_at: "2025-03-05T09:00:00", realized_pnl:   96.00, close_reason: "target"     },
-  { id: 5,  market: "Will Trump invoke emergency powers before April?",   category: "Politics",   side: "NO",  entry_prob: 0.61, exit_prob: 0.55, shares: 200, strategy: "Mean Rev",   opened_at: "2025-02-22T10:00:00", closed_at: "2025-03-03T12:45:00", realized_pnl:   12.00, close_reason: "manual"     },
-  { id: 6,  market: "Will the EU impose new AI regulation in H1 2025?",  category: "Tech/Policy",side: "YES", entry_prob: 0.55, exit_prob: 0.82, shares: 350, strategy: "Prob Drift",  opened_at: "2025-02-25T15:20:00", closed_at: "2025-03-06T11:00:00", realized_pnl:  189.00, close_reason: "target"     },
-  { id: 7,  market: "Will SpaceX Starship reach orbit before May?",      category: "Space",      side: "YES", entry_prob: 0.42, exit_prob: 0.33, shares: 250, strategy: "Momentum",   opened_at: "2025-02-28T09:00:00", closed_at: "2025-03-04T17:30:00", realized_pnl:  -22.50, close_reason: "stop_loss"  },
-  { id: 8,  market: "Will oil price exceed $90/barrel by March?",        category: "Commodities",side: "NO",  entry_prob: 0.48, exit_prob: 0.29, shares: 450, strategy: "Mean Rev",   opened_at: "2025-02-19T14:00:00", closed_at: "2025-03-02T16:55:00", realized_pnl:   85.50, close_reason: "target"     },
-  { id: 9,  market: "Will the S&P 500 hit 6000 before April?",           category: "Equities",   side: "YES", entry_prob: 0.52, exit_prob: 0.68, shares: 300, strategy: "Prob Drift",  opened_at: "2025-03-01T10:00:00", closed_at: "2025-03-06T15:00:00", realized_pnl:   48.00, close_reason: "target"     },
-  { id: 10, market: "Will China GDP growth exceed 5% in 2025?",          category: "Macro",      side: "YES", entry_prob: 0.66, exit_prob: 0.59, shares: 200, strategy: "Anchor",     opened_at: "2025-02-26T09:30:00", closed_at: "2025-03-05T14:20:00", realized_pnl:  -14.00, close_reason: "stop_loss"  },
-  { id: 11, market: "Will Ethereum exceed $5000 before June?",           category: "Crypto",     side: "YES", entry_prob: 0.29, exit_prob: 0.51, shares: 600, strategy: "Momentum",   opened_at: "2025-03-02T08:00:00", closed_at: "2025-03-07T10:30:00", realized_pnl:  132.00, close_reason: "target"     },
-  { id: 12, market: "Will there be a US gov't shutdown in March?",       category: "Politics",   side: "NO",  entry_prob: 0.54, exit_prob: 0.41, shares: 350, strategy: "Prob Drift",  opened_at: "2025-03-03T11:00:00", closed_at: "2025-03-07T16:00:00", realized_pnl:   45.50, close_reason: "target"     },
-];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -48,11 +32,13 @@ const STRATEGY_COLORS: Record<string, string> = {
 };
 
 const REASON_LABELS: Record<string, { label: string; color: string }> = {
-  target:     { label: "Target Hit",   color: "#22c55e" },
-  stop_loss:  { label: "Stop Loss",    color: "#ef4444" },
-  manual:     { label: "Manual",       color: "#f59e0b" },
-  resolution: { label: "Resolved",     color: "#00d4a8" },
+  target:            { label: "Target Hit",   color: "#22c55e" },
+  stop_loss:         { label: "Stop Loss",    color: "#ef4444" },
+  manual:            { label: "Manual",       color: "#f59e0b" },
+  manual_kill_switch:{ label: "Kill Switch",  color: "#ef4444" },
+  resolution:        { label: "Resolved",     color: "#00d4a8" },
 };
+const DEFAULT_REASON = { label: "Closed", color: "#8892a4" };
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -84,15 +70,12 @@ export default function HistoryView() {
   const [sortKey, setSortKey]               = useState<"closed_at" | "realized_pnl">("closed_at");
   const [selectedId, setSelectedId]         = useState<number | null>(null);
 
-  // Fetch real data — API returns array directly shaped to match ClosedPosition
+  // Fetch real closed positions from the API
   useEffect(() => {
     fetch("/api/positions/closed")
-      .then(r => r.ok ? r.json() : null)
-      .then((data: ClosedPosition[] | null) => {
-        if (Array.isArray(data) && data.length > 0) setHistory(data);
-        else setHistory(MOCK_HISTORY); // fallback to mock data
-      })
-      .catch(() => setHistory(MOCK_HISTORY)); // also fallback on error
+      .then(r => r.ok ? r.json() : [])
+      .then((data: ClosedPosition[]) => setHistory(Array.isArray(data) ? data : []))
+      .catch(() => setHistory([]));
   }, []);
 
   // ── Derived stats ─────────────────────────────────────────────────────────
@@ -279,6 +262,12 @@ export default function HistoryView() {
           </div>
 
           <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+            {history.length === 0 ? (
+              <div style={{ padding: "40px 20px", textAlign: "center", color: "#4a5568", fontFamily: "IBM Plex Mono", fontSize: 11, lineHeight: 2 }}>
+                No closed trades yet.<br />
+                <span style={{ fontSize: 10 }}>Positions appear here after they close (target hit, stop loss, or manual close).</span>
+              </div>
+            ) : (
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
@@ -290,7 +279,7 @@ export default function HistoryView() {
               <tbody>
                 {filtered.map(pos => {
                   const isPos = pos.realized_pnl >= 0;
-                  const reason = REASON_LABELS[pos.close_reason];
+                  const reason = REASON_LABELS[pos.close_reason] ?? DEFAULT_REASON;
                   return (
                     <tr key={pos.id}
                       onClick={() => setSelectedId(id => id === pos.id ? null : pos.id)}
@@ -324,6 +313,7 @@ export default function HistoryView() {
                 })}
               </tbody>
             </table>
+            )}
           </div>
         </div>
 
@@ -343,7 +333,7 @@ export default function HistoryView() {
                   { label: "Exit",      value: `${(selected.exit_prob*100).toFixed(0)}¢`,   color: selected.realized_pnl >= 0 ? "#22c55e" : "#ef4444" },
                   { label: "Shares",    value: selected.shares,                             color: "#e8eaf0" },
                   { label: "Capital",   value: `$${(selected.entry_prob * selected.shares).toFixed(0)}`, color: "#e8eaf0" },
-                  { label: "Exit Type", value: REASON_LABELS[selected.close_reason].label,  color: REASON_LABELS[selected.close_reason].color },
+                  { label: "Exit Type", value: (REASON_LABELS[selected.close_reason] ?? DEFAULT_REASON).label,  color: (REASON_LABELS[selected.close_reason] ?? DEFAULT_REASON).color },
                   { label: "Category",  value: selected.category,                           color: "#8892a4" },
                 ].map((item, i) => (
                   <div key={i} style={styles.detailItem}>

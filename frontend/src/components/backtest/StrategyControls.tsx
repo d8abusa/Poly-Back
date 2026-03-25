@@ -11,10 +11,11 @@ interface StrategyControlsProps {
   onParamsChange: (p: StrategyParams) => void;
   executionMode: ExecutionMode;
   onExecutionModeChange: (mode: ExecutionMode) => void;
+  exchange?: string;
 }
 
 // Strategies the backtest engine actually executes
-const LIVE_STRATEGIES = new Set(["threshold", "momentum", "zscore_reversion", "kelly", "market_making"]);
+const LIVE_STRATEGIES = new Set(["threshold", "momentum", "zscore_reversion", "kelly", "market_making", "xgboost", "short_momentum", "short_zscore", "wizard"]);
 
 interface StrategyFull extends StrategyMeta {
   tagline?: string;
@@ -40,6 +41,7 @@ export default function StrategyControls({
   onParamsChange,
   executionMode,
   onExecutionModeChange,
+  exchange,
 }: StrategyControlsProps) {
   const [strategies, setStrategies] = useState<StrategyFull[]>(FALLBACK);
   const [hoveredStrategy, setHoveredStrategy] = useState<string | null>(null);
@@ -87,7 +89,11 @@ export default function StrategyControls({
       </div>
 
       {/* ── Carousel ── */}
-      <div className="strategy-carousel" style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+      <div className="strategy-carousel" style={{
+        display: "flex", gap: 8, overflowX: "auto", paddingBottom: 6,
+        scrollbarWidth: "thin",
+        scrollbarColor: "var(--border2) transparent",
+      }}>
         {strategies.map(s => {
           const active   = activeStrategy === s.id;
           const isLive   = s.status ? s.status === "live" : LIVE_STRATEGIES.has(s.id);
@@ -196,7 +202,7 @@ export default function StrategyControls({
         })}
       </div>
 
-      <ParamSliders strategy={activeStrategy} params={strategyParams} onChange={onParamsChange} />
+      <ParamSliders strategy={activeStrategy} params={strategyParams} onChange={onParamsChange} exchange={exchange} />
       <ExecutionModeToggle mode={executionMode} onChange={onExecutionModeChange} />
 
       {/* Tooltip rendering */}

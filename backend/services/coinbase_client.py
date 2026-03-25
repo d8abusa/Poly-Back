@@ -25,6 +25,21 @@ log = logging.getLogger(__name__)
 COINBASE_BASE    = "https://api.coinbase.com/api/v3/brokerage"
 COINBASE_API_PFX = "/api/v3/brokerage"
 
+# Well-known crypto base currencies — anything not in this set is treated as a stock
+_CRYPTO_BASES = {
+    "BTC","ETH","SOL","ADA","AVAX","DOGE","MATIC","LINK","DOT","ATOM","XRP",
+    "LTC","BCH","UNI","AAVE","CRV","SNX","MKR","COMP","YFI","SUSHI","1INCH",
+    "GRT","FIL","ICP","NEAR","ALGO","XLM","EOS","TRX","VET","THETA","FTM",
+    "SAND","MANA","AXS","ENJ","CHZ","BAT","ZRX","OMG","LRC","SKL","STORJ",
+    "NKN","CELO","ANKR","REN","BAND","KNC","BAL","OCEAN","PERP","RARI",
+    "SHIB","APE","GMT","GAL","IMX","OP","ARB","BLUR","PEPE","WLD","PYTH",
+    "TIA","STRK","MANTA","PIXEL","PORTAL","TNSR","SAGA","ZETA","OMNI",
+    "REZ","ETHFI","ENS","PENDLE","W","IO","ZK","BLAST","NOT","LISTA","ZRO",
+    "EIGEN","GRASS","GOAT","PNUT","ACT","HYPE","VIRTUAL","AI16Z","FARTCOIN",
+    "USDC","USDT","DAI","BUSD","TUSD","USDP","GUSD","FRAX","LUSD",
+    "WBTC","STETH","RETH","CBETH","WETH",
+}
+
 
 def _build_jwt(method: str, api_path: str) -> str:
     """Build a short-lived JWT for the given request using ES256.
@@ -74,31 +89,53 @@ class CoinbaseClient(BaseExchangeClient):
 
     # ── Market listing ────────────────────────────────────────────────────────
 
-    async def search_markets(self, limit: int = 50, offset: int = 0, **kwargs) -> list[dict]:
+    async def search_markets(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        category: Optional[str] = None,   # "crypto", "stocks", or None for all
+        **kwargs,
+    ) -> list[dict]:
         path = "/products"
         headers = self._auth_headers("GET", path)
-        params = {"limit": min(limit + offset, 250), "product_type": "SPOT"}
+        # Fetch a larger pool so we can filter and still return `limit` results
+        fetch_n = min((limit + offset) * 3, 500)
+        params = {"limit": fetch_n, "product_type": "SPOT"}
         resp = await self._client.get(f"{COINBASE_BASE}{path}", headers=headers, params=params)
         resp.raise_for_status()
         products = resp.json().get("products", [])
+
+        # Sort by USD-denominated volume (approximate_quote_24h_volume) so BTC/ETH
+        # rank above token-count-heavy meme coins (PEPE has 881B tokens but low USD vol)
+        products.sort(key=lambda p: float(p.get("approximate_quote_24h_volume", 0) or 0), reverse=True)
+
+        # Apply category filter if requested
+        if category == "stocks":
+            products = [p for p in products if p.get("base_currency_id", "").upper() not in _CRYPTO_BASES]
+        elif category == "crypto":
+            products = [p for p in products if p.get("base_currency_id", "").upper() in _CRYPTO_BASES]
+
         return products[offset:offset + limit]
 
     def normalize_market(self, raw: dict) -> dict:
         product_id = raw.get("product_id", "")
+        base       = raw.get("base_currency_id", product_id.split("-")[0]).upper()
         price      = float(raw.get("price", 0) or 0)
+        is_stock   = base not in _CRYPTO_BASES
+        category   = "Stocks" if is_stock else "Crypto"
         return {
             "id":           product_id,
             "condition_id": product_id,
             "token_id":     product_id,
             "title":        raw.get("display_name") or product_id,
-            "category":     "Crypto",
-            "prob":         round(price, 4),
+            "category":     category,
+            "prob":         round(price, 8),
             "volume":       float(raw.get("volume_24h", 0) or 0),
             "liquidity":    0.0,
             "resolved":     False,
             "outcome":      None,
             "end_date":     "",
-            "tags":         [],
+            "tags":         [category],
             "exchange":     "coinbase",
         }
 
@@ -137,10 +174,70 @@ class CoinbaseClient(BaseExchangeClient):
             resp = await self._client.get(f"{COINBASE_BASE}{path}", headers=headers, params=params)
             resp.raise_for_status()
             candles = resp.json().get("candles", [])
-            return [{"t": int(c["start"]), "p": round(float(c["close"]), 4)} for c in candles if c.get("close")]
+            return [{"t": int(c["start"]), "p": round(float(c["close"]), 8)} for c in candles if c.get("close")]
         except Exception as exc:
             log.warning("Coinbase price history failed %s: %s", product, exc)
             return []
+
+    # ── Live feed snapshot ────────────────────────────────────────────────────
+
+    async def get_market_snapshot(self, market_id: str, token_id: Optional[str] = None) -> dict:
+        """Snapshot: last price from /products, best bid/ask from /best_bid_ask."""
+        import asyncio as _asyncio
+        product = token_id or market_id
+        prod_path = f"/products/{product}"
+        bbo_path  = "/best_bid_ask"
+
+        prod_resp, bbo_resp = await _asyncio.gather(
+            self._client.get(f"{COINBASE_BASE}{prod_path}", headers=self._auth_headers("GET", prod_path)),
+            self._client.get(f"{COINBASE_BASE}{bbo_path}",  headers=self._auth_headers("GET", bbo_path),
+                             params={"product_ids": [product]}),
+            return_exceptions=True,
+        )
+        try:
+            data   = prod_resp.json() if not isinstance(prod_resp, Exception) else {}
+            price  = float(data.get("price") or 0) or None
+            active = not data.get("is_disabled", False) and not data.get("trading_disabled", False)
+            title  = data.get("display_name") or product
+        except Exception:
+            price, active, title = None, True, product
+
+        bid = ask = None
+        bids_list = asks_list = []
+        try:
+            pb = bbo_resp.json().get("pricebooks", [{}])[0] if not isinstance(bbo_resp, Exception) else {}
+            raw_bids = pb.get("bids", [])
+            raw_asks = pb.get("asks", [])
+            if raw_bids:
+                bid = float(raw_bids[0]["price"])
+                bids_list = [{"price": float(b["price"]), "size": float(b["size"])} for b in raw_bids[:5]]
+            if raw_asks:
+                ask = float(raw_asks[0]["price"])
+                asks_list = [{"price": float(a["price"]), "size": float(a["size"])} for a in raw_asks[:5]]
+        except Exception:
+            pass
+
+        mid    = round((bid + ask) / 2, 8) if bid and ask else price
+        spread = round(ask - bid, 8) if bid and ask else None
+        return {
+            "token_id":      product,
+            "condition_id":  market_id,
+            "last_price":    price,
+            "midpoint":      mid,
+            "best_bid":      bid,
+            "best_ask":      ask,
+            "spread":        spread,
+            "bids":          bids_list,
+            "asks":          asks_list,
+            "recent_trades": [],
+            "market": {
+                "title":    title,
+                "active":   active,
+                "closed":   data.get("status") == "delisted" if isinstance(data, dict) else False,
+                "end_date": "",
+                "outcome":  None,
+            },
+        }
 
     # ── Order placement ───────────────────────────────────────────────────────
 

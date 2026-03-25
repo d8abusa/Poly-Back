@@ -2,12 +2,12 @@
 
 export type ExecutionMode  = "auto" | "confirm" | "alert_only";
 export type SignalStatus   = "pending" | "approved" | "rejected" | "auto_executed";
-export type ExchangeId     = "coinbase" | "kalshi" | "manifold" | "polymarket";
+export type ExchangeId     = "coinbase" | "kalshi" | "manifold" | "polymarket" | "yahoo";
 
 export interface ExchangeInfo {
   id:          ExchangeId;
   name:        string;
-  type:        "real_money" | "play_money";
+  type:        "real_money" | "play_money" | "market_data";
   description: string;
 }
 
@@ -84,6 +84,7 @@ export interface Market {
   title: string;
   category: string;
   prob: number;
+  prev_prob?: number;   // previous period close for delta display
   volume: number;
   liquidity: number;
   resolved: boolean;
@@ -91,6 +92,7 @@ export interface Market {
   end_date: string;
   tags: string[];
   exchange: ExchangeId;
+  history?: HistoryPoint[];   // pre-fetched by Yahoo client — skip separate history call
 }
 
 export interface HistoryPoint {
@@ -113,6 +115,15 @@ export interface StrategyParams {
   zscore_stop:     number;
   kelly_fraction:  number;
   mm_spread:       number;
+  xgb_n_estimators:  number;
+  xgb_learning_rate: number;
+  xgb_max_depth:     number;
+  xgb_train_frac:    number;
+  xgb_confidence:    number;
+  // Momentum Chaser (stocks/crypto)
+  window:        number;
+  momentum_min:  number;
+  trail_pct:     number;
 }
 
 export interface TradeEntry {
@@ -130,6 +141,16 @@ export interface EquityPoint {
   price: number;
 }
 
+export interface WizardRanking {
+  strategy:     string;
+  name:         string;
+  total_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  win_rate:     number;
+  total_trades: number;
+}
+
 export interface BacktestResult {
   success: boolean;
   error?: string;
@@ -143,6 +164,7 @@ export interface BacktestResult {
   win_rate: number;
   equity_curve: EquityPoint[];
   trades: TradeEntry[];
+  wizard_rankings?: WizardRanking[];
 }
 
 export interface BatchBacktestResult {

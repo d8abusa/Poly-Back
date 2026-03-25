@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import type { Market, BatchBacktestResult, ExecutionMode, StrategyParams } from "../../types";
 import StrategyControls from "./StrategyControls";
 import BulkLoadModal from "./BulkLoadModal";
+import ScannerControls from "./ScannerControls";
 
 interface BacktestPanelProps {
   markets: Market[];
@@ -17,6 +18,11 @@ interface BacktestPanelProps {
   onParamsChange: (p: StrategyParams) => void;
   executionMode: ExecutionMode;
   onExecutionModeChange: (mode: ExecutionMode) => void;
+  exchange: string;
+  dateFrom: string;
+  dateTo: string;
+  onDateFromChange: (v: string) => void;
+  onDateToChange: (v: string) => void;
 }
 
 export default function BacktestPanel({
@@ -33,8 +39,32 @@ export default function BacktestPanel({
   onParamsChange,
   executionMode,
   onExecutionModeChange,
+  exchange,
+  dateFrom,
+  dateTo,
+  onDateFromChange,
+  onDateToChange,
 }: BacktestPanelProps) {
   const [showBulk, setShowBulk] = useState(false);
+  const [queueHeight, setQueueHeight] = useState(80);
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { startY: e.clientY, startH: queueHeight };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const delta = dragRef.current.startY - ev.clientY;
+      setQueueHeight(Math.max(48, Math.min(400, dragRef.current.startH + delta)));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [queueHeight]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
@@ -53,11 +83,29 @@ export default function BacktestPanel({
         onParamsChange={onParamsChange}
         executionMode={executionMode}
         onExecutionModeChange={onExecutionModeChange}
+        exchange={exchange}
       />
 
-      <div className="queue-bar">
-        <span className="queue-label">Backtest queue:</span>
-        <div className="queue-chips">
+      {/* Drag handle */}
+      <div
+        onMouseDown={onDragStart}
+        style={{
+          height: 6,
+          cursor: "ns-resize",
+          background: "var(--border)",
+          borderTop: "1px solid var(--border2)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ width: 32, height: 2, borderRadius: 1, background: "var(--muted)" }} />
+      </div>
+
+      <div className="queue-bar" style={{ height: queueHeight, alignItems: "flex-start", overflow: "hidden" }}>
+        <span className="queue-label" style={{ paddingTop: 2 }}>Backtest queue:</span>
+        <div className="queue-chips" style={{ overflowY: "auto", maxHeight: "100%", alignContent: "flex-start" }}>
           {queuedMarkets.length === 0 ? (
             <span style={{ fontSize: 10, color: "var(--muted)", alignSelf: "center" }}>
               No markets selected — check ☑ to add
@@ -80,6 +128,33 @@ export default function BacktestPanel({
         >
           Bulk Load
         </button>
+        {/* Date range window */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: 6, flexShrink: 0 }}>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={e => onDateFromChange(e.target.value)}
+            title="Backtest start date"
+            style={{
+              background: "var(--surface2)", border: "1px solid var(--border2)",
+              color: "var(--muted2)", borderRadius: 4, padding: "1px 4px",
+              fontSize: 9, fontFamily: "IBM Plex Mono, monospace",
+              colorScheme: "dark", width: 108,
+            }}
+          />
+          <input
+            type="date"
+            value={dateTo}
+            onChange={e => onDateToChange(e.target.value)}
+            title="Backtest end date"
+            style={{
+              background: "var(--surface2)", border: "1px solid var(--border2)",
+              color: "var(--muted2)", borderRadius: 4, padding: "1px 4px",
+              fontSize: 9, fontFamily: "IBM Plex Mono, monospace",
+              colorScheme: "dark", width: 108,
+            }}
+          />
+        </div>
         <button
           className="queue-run"
           disabled={!queuedMarkets.length || running}
@@ -102,6 +177,14 @@ export default function BacktestPanel({
           }} />
         </div>
       )}
+
+      <ScannerControls
+        queuedMarkets={queuedMarkets}
+        activeStrategy={activeStrategy}
+        strategyParams={strategyParams}
+        executionMode={executionMode}
+        exchange={exchange}
+      />
 
       {/* Inline summary when results are ready */}
       {backtestResults && !running && (

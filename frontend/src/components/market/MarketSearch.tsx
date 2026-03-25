@@ -10,6 +10,9 @@ interface MarketSearchProps {
   queuedMarkets: Market[];
   onSelectMarket: (market: Market) => void;
   onToggleQueue: (market: Market) => void;
+  /** When true, the search box calls onLiveSearch instead of filtering locally */
+  liveSearch?: boolean;
+  onLiveSearch?: (q: string) => void;
 }
 
 const SORT_OPTIONS = [
@@ -28,16 +31,25 @@ export default function MarketSearch({
   queuedMarkets,
   onSelectMarket,
   onToggleQueue,
+  liveSearch = false,
+  onLiveSearch,
 }: MarketSearchProps) {
-  // Search/filter/sort state is local — only this panel uses it
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("All");
   const [sort, setSort] = useState<SortKey>("volume");
 
+  const handleQueryChange = (val: string) => {
+    setQuery(val);
+    if (liveSearch) onLiveSearch?.(val);
+  };
+
   const cats = ["All", ...Array.from(new Set(markets.map(m => m.category))).sort()];
 
+  // Live search: markets are already the API result — just sort them
+  // Local search: filter client-side
   const filtered = markets
     .filter(m => {
+      if (liveSearch) return cat === "All" || m.category === cat;
       const q = query.toLowerCase();
       const matchQ =
         !q ||
@@ -66,11 +78,11 @@ export default function MarketSearch({
           <input
             className="search-input"
             value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search markets, tags, categories…"
+            onChange={e => handleQueryChange(e.target.value)}
+            placeholder={liveSearch ? "Search any ticker or company name…" : "Search markets, tags, categories…"}
             autoFocus
           />
-          {query && <span className="search-clear" onClick={() => setQuery("")}>×</span>}
+          {query && <span className="search-clear" onClick={() => handleQueryChange("")}>×</span>}
         </div>
       </div>
 

@@ -1,14 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 
 import { globalCss } from "../styles";
-import type { Market, HistoryPoint, BatchBacktestResult, HistoryRun, ExecutionMode, StrategyParams, ExchangeId } from "../types";
+import type { Market, HistoryPoint, BatchBacktestResult, HistoryRun, ExecutionMode, StrategyParams, ExchangeId, TradeEntry } from "../types";
 import { DEFAULT_PARAMS } from "../components/backtest/ParamSliders";
 
 import MarketSearch from "../components/market/MarketSearch";
 import MarketDetail from "../components/market/MarketDetail";
 import BacktestPanel from "../components/backtest/BacktestPanel";
 import BacktestResults from "../components/backtest/BacktestResults";
-import HistoryDrawer from "../components/shared/HistoryDrawer";
+import RunsView from "../components/runs/RunsView";
 import SignalQueue from "../components/execution/SignalQueue";
 import ExecutionLog from "../components/execution/ExecutionLog";
 import PositionTracker from "../components/positions/PositionTracker";
@@ -17,6 +17,7 @@ import LiveFeed from "../components/feed/LiveFeed";
 import AuthStatus from "../components/shared/AuthStatus";
 import StrategyDetailPanel from "../components/shared/StrategyDetailPanel";
 import SettingsPanel from "../components/shared/SettingsPanel";
+import Watchlist from "../components/watchlist/Watchlist";
 
 // ── BacktestConsole — owns ALL shared state ────────────────────────────────────
 
@@ -44,17 +45,82 @@ export default function BacktestConsole() {
   const [historyRuns, setHistoryRuns] = useState<HistoryRun[]>([]);
 
   // ── Exchange ──────────────────────────────────────────────────────────────────
-  const [exchange,     setExchange]     = useState<ExchangeId>("kalshi");
-  const [showSettings, setShowSettings] = useState(false);
+  const [exchange, setExchange] = useState<ExchangeId>("kalshi");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo,   setDateTo]   = useState("");
+  const [showSettings,    setShowSettings]    = useState(false);
 
   // ── Execution mode + view ─────────────────────────────────────────────────────
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("confirm");
-  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed">("backtest");
+  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed" | "runs" | "watchlist">("backtest");
 
   // ── Toast ────────────────────────────────────────────────────────────────────
   const [toastMsg, setToastMsg] = useState("");
 
-  // ── Fetch market list on mount ───────────────────────────────────────────────
+  // ── Results panel resize ─────────────────────────────────────────────────────
+  const [resultsHeight, setResultsHeight] = useState(280);
+  const resultsDragRef = useRef<{ startY: number; startH: number } | null>(null);
+  const onResultsDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resultsDragRef.current = { startY: e.clientY, startH: resultsHeight };
+    const onMove = (ev: MouseEvent) => {
+      if (!resultsDragRef.current) return;
+      const delta = resultsDragRef.current.startY - ev.clientY;
+      setResultsHeight(Math.max(120, Math.min(800, resultsDragRef.current.startH + delta)));
+    };
+    const onUp = () => {
+      resultsDragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [resultsHeight]);
+
+  // ── Load persisted run history on mount ──────────────────────────────────────
+  useEffect(() => {
+    fetch("/api/backtest/history?limit=50")
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => {
+        const runs: HistoryRun[] = (data.runs ?? []).map((r: any) => ({
+          id:           r.id,
+          runAt:        r.run_at,
+          strategy:     r.strategy,
+          marketTitles: Array.isArray(r.market_titles) ? r.market_titles : [],
+          batch:        r.payload,
+        }));
+        if (runs.length > 0) setHistoryRuns(runs);
+      })
+      .catch(() => {/* history unavailable — start fresh */});
+  }, []);
+
+  // ── History cache — pre-populated from embedded market.history ───────────────
+  const [historyCache, setHistoryCache] = useState<Record<string, HistoryPoint[]>>({});
+
+  // ── Live search (Yahoo only) ──────────────────────────────────────────────────
+  const liveSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleLiveSearch = useCallback((q: string) => {
+    if (liveSearchTimer.current) clearTimeout(liveSearchTimer.current);
+    liveSearchTimer.current = setTimeout(() => {
+      setLoading(true);
+      fetch(`/api/markets?limit=20&exchange=${exchange}&q=${encodeURIComponent(q)}`)
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(data => {
+          const list: Market[] = data.markets ?? [];
+          setMarkets(list);
+          if (list.length) setSelectedMarket(list[0]);
+          const cache: Record<string, HistoryPoint[]> = {};
+          for (const m of list) {
+            if (m.history?.length) cache[m.id] = m.history;
+          }
+          if (Object.keys(cache).length) setHistoryCache(prev => ({ ...prev, ...cache }));
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }, 450);
+  }, [exchange]);
+
+  // ── Fetch market list on mount / exchange change ─────────────────────────────
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -64,8 +130,15 @@ export default function BacktestConsole() {
         return r.json();
       })
       .then(data => {
-        setMarkets(data.markets ?? []);
-        setSelectedMarket(data.markets?.[0] ?? null);
+        const list: Market[] = data.markets ?? [];
+        setMarkets(list);
+        setSelectedMarket(list[0] ?? null);
+        // Cache any pre-fetched histories from the response (Yahoo bundles them)
+        const cache: Record<string, HistoryPoint[]> = {};
+        for (const m of list) {
+          if (m.history?.length) cache[m.id] = m.history;
+        }
+        if (Object.keys(cache).length) setHistoryCache(prev => ({ ...prev, ...cache }));
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
@@ -73,10 +146,15 @@ export default function BacktestConsole() {
 
   // ── Fetch price history when selected market changes ─────────────────────────
   useEffect(() => {
-    if (!selectedMarket?.id) {
-      setPriceHistory(null);
+    if (!selectedMarket?.id) { setPriceHistory(null); return; }
+
+    // Use pre-fetched history from cache (Yahoo bundles 1Y on search)
+    const cached = historyCache[selectedMarket.id];
+    if (cached?.length) {
+      setPriceHistory(cached);
       return;
     }
+
     setHistoryLoading(true);
     setPriceHistory(null);
     const tid = selectedMarket.token_id ?? selectedMarket.id;
@@ -85,7 +163,11 @@ export default function BacktestConsole() {
       `?token_id=${encodeURIComponent(tid)}&interval=max&exchange=${exchange}`
     )
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
-      .then(data => setPriceHistory(data.history ?? []))
+      .then(data => {
+        const h = data.history ?? [];
+        setPriceHistory(h);
+        if (h.length) setHistoryCache(prev => ({ ...prev, [selectedMarket.id]: h }));
+      })
       .catch(() => setPriceHistory(null))
       .finally(() => setHistoryLoading(false));
   }, [selectedMarket?.id, exchange]);
@@ -111,6 +193,13 @@ export default function BacktestConsole() {
     setTimeout(() => setToastMsg(""), 3000);
   };
 
+  // Trades from the last run that belong to the currently selected market
+  const selectedMarketTrades = useMemo((): TradeEntry[] => {
+    if (!backtestResults || !selectedMarket) return [];
+    const id = selectedMarket.condition_id ?? selectedMarket.id;
+    return backtestResults.results.find(r => r.condition_id === id)?.trades ?? [];
+  }, [backtestResults, selectedMarket]);
+
   const handleRunBacktest = async () => {
     const runnable = queuedMarkets.filter(m => m.token_id && m.condition_id);
     if (!runnable.length) {
@@ -135,6 +224,8 @@ export default function BacktestConsole() {
           initial_capital: 1000,
           interval: "max",
           execution_mode: executionMode,
+          ...(dateFrom ? { date_from: dateFrom } : {}),
+          ...(dateTo   ? { date_to:   dateTo   } : {}),
         }),
       });
 
@@ -167,6 +258,24 @@ export default function BacktestConsole() {
     }
   };
 
+  // ── Auto-rerun on param / strategy / date change ─────────────────────────────
+  // Keep a ref to the latest run function to avoid stale closures in the timer.
+  const handleRunBacktestRef = useRef(handleRunBacktest);
+  useEffect(() => { handleRunBacktestRef.current = handleRunBacktest; });
+
+  const autoRunKey = useMemo(
+    () => JSON.stringify({ strategyParams, activeStrategy, dateFrom, dateTo }),
+    [strategyParams, activeStrategy, dateFrom, dateTo]
+  );
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    // Skip the very first render so we don't fire on mount before any user action
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    if (!queuedMarkets.length || running) return;
+    const timer = setTimeout(() => handleRunBacktestRef.current(), 650);
+    return () => clearTimeout(timer);
+  }, [autoRunKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleLoadRun = (batch: BatchBacktestResult) => {
     setBacktestResults(batch);
   };
@@ -192,9 +301,9 @@ export default function BacktestConsole() {
 
           {/* Exchange selector */}
           <div style={{ display: "flex", gap: 2, marginLeft: 8 }}>
-            {(["kalshi", "manifold", "coinbase"] as const).map(ex => {
-              const labels: Record<string, string> = { kalshi: "Kalshi", manifold: "Manifold", coinbase: "Coinbase" };
-              const colors: Record<string, string> = { kalshi: "#3b82f6", manifold: "#f59e0b", coinbase: "#0052ff" };
+            {(["kalshi", "coinbase", "yahoo", "polymarket"] as const).map(ex => {
+              const labels: Record<string, string> = { kalshi: "Kalshi", coinbase: "Coinbase", yahoo: "Stocks", polymarket: "Polymarket" };
+              const colors: Record<string, string> = { kalshi: "#3b82f6", coinbase: "#0052ff", yahoo: "#22c55e", polymarket: "#00d4a8" };
               const active = exchange === ex;
               return (
                 <button
@@ -227,27 +336,39 @@ export default function BacktestConsole() {
               <span className="sel-count">⚡ {queuedMarkets.length} queued</span>
             )}
             {/* View nav */}
-            {(["backtest", "signals", "positions", "history", "strategies", "feed"] as const).map(v => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                style={{
-                  padding: "3px 10px", borderRadius: 4, cursor: "pointer",
-                  fontFamily: "IBM Plex Mono, monospace", fontSize: 10,
-                  border: `1px solid ${view === v ? "rgba(0,212,168,0.35)" : "var(--border2)"}`,
-                  background: view === v ? "rgba(0,212,168,0.08)" : "var(--surface2)",
-                  color: view === v ? "var(--accent)" : "var(--muted2)",
-                  fontWeight: view === v ? 700 : 400,
-                }}
-              >
-                {v === "backtest" ? "Backtest" : v === "signals" ? "Signals" : v === "positions" ? "Positions" : v === "history" ? "History" : v === "strategies" ? "Strategies" : "Feed"}
-              </button>
-            ))}
-            <HistoryDrawer
-              historyRuns={historyRuns}
-              onLoadRun={handleLoadRun}
-              onDeleteRun={handleDeleteRun}
-            />
+            {(["backtest", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist"] as const).map(v => {
+              const labels: Record<string, string> = {
+                backtest: "Backtest", signals: "Signals", positions: "Positions",
+                history: "Trade History", strategies: "Strategies", feed: "Feed", runs: "Runs", watchlist: "Watchlist",
+              };
+              const active = view === v;
+              return (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  style={{
+                    padding: "3px 10px", borderRadius: 4, cursor: "pointer",
+                    fontFamily: "IBM Plex Mono, monospace", fontSize: 10,
+                    border: `1px solid ${active ? "rgba(0,212,168,0.35)" : "var(--border2)"}`,
+                    background: active ? "rgba(0,212,168,0.08)" : "var(--surface2)",
+                    color: active ? "var(--accent)" : "var(--muted2)",
+                    fontWeight: active ? 700 : 400,
+                    position: "relative",
+                  }}
+                >
+                  {labels[v]}
+                  {v === "runs" && historyRuns.length > 0 && (
+                    <span style={{
+                      position: "absolute", top: -4, right: -4, width: 14, height: 14,
+                      background: "var(--accent3)", borderRadius: "50%", fontSize: 8,
+                      color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {historyRuns.length}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
             <AuthStatus />
             {/* Settings gear */}
             <button
@@ -279,6 +400,8 @@ export default function BacktestConsole() {
               queuedMarkets={queuedMarkets}
               onSelectMarket={handleSelectMarket}
               onToggleQueue={handleToggleQueue}
+              liveSearch={exchange === "yahoo"}
+              onLiveSearch={handleLiveSearch}
             />
 
             {/* Right: detail + backtest */}
@@ -287,6 +410,9 @@ export default function BacktestConsole() {
                 selectedMarket={selectedMarket}
                 priceHistory={priceHistory}
                 historyLoading={historyLoading}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                trades={selectedMarketTrades}
               />
 
               <BacktestPanel
@@ -306,10 +432,29 @@ export default function BacktestConsole() {
                 onParamsChange={setStrategyParams}
                 executionMode={executionMode}
                 onExecutionModeChange={setExecutionMode}
+                exchange={exchange}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onDateFromChange={setDateFrom}
+                onDateToChange={setDateTo}
               />
 
               {backtestResults && !running && (
-                <BacktestResults results={backtestResults} />
+                <>
+                  <div
+                    onMouseDown={onResultsDragStart}
+                    style={{
+                      height: 6, cursor: "ns-resize", background: "var(--border)",
+                      borderTop: "1px solid var(--border2)", display: "flex",
+                      alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    }}
+                  >
+                    <div style={{ width: 32, height: 2, borderRadius: 1, background: "var(--muted)" }} />
+                  </div>
+                  <div style={{ height: resultsHeight, minHeight: 120, overflow: "hidden", flexShrink: 0, display: "flex", flexDirection: "column" }}>
+                    <BacktestResults results={backtestResults} />
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -330,11 +475,23 @@ export default function BacktestConsole() {
           </div>
         ) : view === "strategies" ? (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
-            <StrategyDetailPanel />
+            <StrategyDetailPanel onUseStrategy={id => { setActiveStrategy(id); setView("backtest"); }} />
+          </div>
+        ) : view === "feed" ? (
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <LiveFeed markets={markets} exchange={exchange} />
+          </div>
+        ) : view === "watchlist" ? (
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <Watchlist />
           </div>
         ) : (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
-            <LiveFeed markets={markets} exchange={exchange} />
+            <RunsView
+              historyRuns={historyRuns}
+              onLoadRun={batch => { handleLoadRun(batch); setView("backtest"); }}
+              onDeleteRun={handleDeleteRun}
+            />
           </div>
         )}
 

@@ -315,7 +315,11 @@ function CreateModal({ initial, onSave, onClose }: StrategyFormModalProps) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function StrategyDetailPanel() {
+interface StrategyDetailPanelProps {
+  onUseStrategy?: (strategyId: string) => void;
+}
+
+export default function StrategyDetailPanel({ onUseStrategy }: StrategyDetailPanelProps) {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [active, setActive] = useState<Strategy | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
@@ -708,7 +712,10 @@ export default function StrategyDetailPanel() {
             <div style={{ fontSize: 10, color: "#606880" }}>Ready to test this strategy?</div>
             <div style={{ fontSize: 11, color: "#8891aa" }}>Select markets in the backtest console and run {active.name}</div>
           </div>
-          <button style={{ padding: "8px 20px", borderRadius: 7, background: `linear-gradient(135deg, ${active.color}, ${active.color}bb)`, color: "#000", fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>
+          <button
+            onClick={() => onUseStrategy?.(active.id)}
+            style={{ padding: "8px 20px", borderRadius: 7, background: `linear-gradient(135deg, ${active.color}, ${active.color}bb)`, color: "#000", fontFamily: "Syne, sans-serif", fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}
+          >
             Use This Strategy →
           </button>
         </div>

@@ -261,14 +261,14 @@ class KalshiClient(BaseExchangeClient):
 
     async def get_order_book(self, market_id: str, token_id: Optional[str] = None) -> dict:
         ticker = token_id or market_id
-        series = _series_from_ticker(ticker)
         try:
-            resp = await self._client.get(f"{KALSHI_BASE}/series/{series}/markets/{ticker}/orderbook")
+            resp = await self._client.get(f"{KALSHI_BASE}/markets/{ticker}/orderbook")
             resp.raise_for_status()
-            ob   = resp.json().get("orderbook", {})
-            # New API: yes/no lists of [price_dollars_str, qty]
-            bids = [{"price": _dollars_to_prob(p), "size": float(q)} for p, q in (ob.get("yes", []) or [])]
-            asks = [{"price": _dollars_to_prob(p), "size": float(q)} for p, q in (ob.get("no",  []) or [])]
+            ob = resp.json().get("orderbook_fp", {})
+            # yes_dollars: bids for YES (probability of YES)
+            # no_dollars: bids for NO; convert to YES ask = 1 - no_price
+            bids = [{"price": _dollars_to_prob(p), "size": float(q)} for p, q in (ob.get("yes_dollars", []) or [])]
+            asks = [{"price": round(1 - _dollars_to_prob(p), 4), "size": float(q)} for p, q in (ob.get("no_dollars",  []) or [])]
             bids.sort(key=lambda x: -x["price"])
             asks.sort(key=lambda x:  x["price"])
             return {"bids": bids, "asks": asks}
@@ -279,6 +279,59 @@ class KalshiClient(BaseExchangeClient):
     async def get_recent_trades(self, market_id: str, token_id: Optional[str] = None, limit: int = 20) -> list:
         # Kalshi trades require auth; return empty for public mode
         return []
+
+    async def get_market_snapshot(self, market_id: str, token_id: Optional[str] = None) -> dict:
+        """Combined snapshot: market info + orderbook in two parallel calls."""
+        ticker = token_id or market_id
+        import asyncio as _asyncio
+        market_info, book = await _asyncio.gather(
+            self._client.get(f"{KALSHI_BASE}/markets/{ticker}"),
+            self.get_order_book(market_id, token_id),
+            return_exceptions=True,
+        )
+        # Parse market info
+        m = {}
+        last_price = None
+        bid = ask = None
+        if not isinstance(market_info, Exception):
+            try:
+                market_info.raise_for_status()
+                raw = market_info.json().get("market", {})
+                last_price = _dollars_to_prob(raw.get("last_price_dollars")) or None
+                bid = _dollars_to_prob(raw.get("yes_bid_dollars")) or None
+                ask = _dollars_to_prob(raw.get("yes_ask_dollars")) or None
+                m = {
+                    "title":    raw.get("title") or ticker,
+                    "active":   raw.get("status") == "active",
+                    "closed":   raw.get("status") in ("finalized", "settled", "resolved"),
+                    "end_date": raw.get("close_time", ""),
+                    "outcome":  raw.get("result") or None,
+                }
+            except Exception as exc:
+                log.warning("Kalshi market info failed %s: %s", ticker, exc)
+
+        if isinstance(book, Exception):
+            book = {"bids": [], "asks": []}
+
+        bids = book.get("bids", [])
+        asks = book.get("asks", [])
+        best_bid = bid or (bids[0]["price"] if bids else None)
+        best_ask = ask or (asks[0]["price"] if asks else None)
+        mid      = round((best_bid + best_ask) / 2, 4) if best_bid and best_ask else last_price
+        spread   = round(best_ask - best_bid, 4) if best_bid and best_ask else None
+        return {
+            "token_id":      ticker,
+            "condition_id":  market_id,
+            "last_price":    last_price,
+            "midpoint":      mid,
+            "best_bid":      best_bid,
+            "best_ask":      best_ask,
+            "spread":        spread,
+            "bids":          bids[:10],
+            "asks":          asks[:10],
+            "recent_trades": [],
+            "market":        m,
+        }
 
     async def get_last_price(self, market_id: str, token_id: Optional[str] = None) -> Optional[float]:
         ticker = token_id or market_id

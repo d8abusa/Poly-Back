@@ -94,7 +94,7 @@ export const globalCss = `
   .anomaly { display:inline-flex; align-items:center; gap:4px; font-size:10px; padding:2px 7px; border-radius:4px; background:rgba(255,107,53,0.1); color:var(--accent2); border:1px solid rgba(255,107,53,0.2); }
 
   /* PROB CHART */
-  .prob-chart-wrap { flex:1; min-height:0; padding:16px 20px 8px; display:flex; flex-direction:column; }
+  .prob-chart-wrap { flex:0 0 160px; min-height:0; padding:16px 20px 8px; display:flex; flex-direction:column; }
   .prob-chart-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
   .prob-chart-label span { color:var(--muted2); font-size:11px; text-transform:none; letter-spacing:0; }
   .prob-chart { flex:1; min-height:120px; position:relative; }

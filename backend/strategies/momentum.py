@@ -21,7 +21,7 @@ strategy = BaseStrategy(
     formula="momentum = (p_now − p_{t−window}) / p_{t−window}  ×  100",
     params=[
         StrategyParam(name="window",       label="Breakout Window",   default=14, min=3,  max=30, step=1,  desc="Days to look back for breakout level"),
-        StrategyParam(name="momentum_min", label="Min Momentum %",    default=15, min=5,  max=50, step=5,  desc="Minimum % move to confirm breakout"),
+        StrategyParam(name="momentum_min", label="Min Momentum %",    default=5,  min=0.5, max=50, step=0.5, desc="Minimum % breakout above rolling high to confirm entry"),
         StrategyParam(name="trail_pct",    label="Trail Distance %",  default=10, min=3,  max=25, step=1,  desc="How far below peak before trailing stop fires"),
         StrategyParam(name="stop_loss",    label="Hard Stop %",       default=15, min=5,  max=40, step=1,  desc="Absolute stop loss regardless of trailing"),
     ],

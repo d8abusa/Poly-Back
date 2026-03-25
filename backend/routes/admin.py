@@ -1,1 +1,61 @@
-from fastapi import APIRouter, HTTPException, Header\nfrom backend.services.drawdown_monitor import drawdown_monitor\nfrom backend.services.position_tracker import position_tracker  # Placeholder for actual implementation\n\nrouter = APIRouter()\n\nKILL_TOKEN = os.getenv('KILL_TOKEN', 'default_token')\n\n@router.post("/api/positions/risk/kill")\nasync def kill_trading(x_kill_token: str = Header(...)):\n    if x_kill_token != KILL_TOKEN:\n        raise HTTPException(status_code=401, detail="Unauthorized")\n\n    drawdown_monitor.trading_halted = True\n\n    positions_closed = position_tracker.close_open_positions()  # Placeholder for actual implementation\n    positions_failed = position_tracker.get_open_positions()  # Placeholder for actual implementation\n\n    return {"halted": True, "positions_closed": positions_closed, "positions_failed": positions_failed}\n\n@router.post("/api/positions/risk/resume")\nasync def resume_trading(x_kill_token: str = Header(...)):\n    if x_kill_token != KILL_TOKEN:\n        raise HTTPException(status_code=401, detail="Unauthorized")\n\n    drawdown_monitor.trading_halted = False\n    return {"halted": False}\n\n@router.get("/api/positions/risk/status")\nasync def get_risk_status(x_kill_token: str = Header(...)):\n    if x_kill_token != KILL_TOKEN:\n        raise HTTPException(status_code=401, detail="Unauthorized")\n\n    open_positions = position_tracker.get_open_positions()  # Placeholder for actual implementation\n    capital_at_risk = position_tracker.calculate_capital_at_risk()  # Placeholder for actual implementation\n    return {"halted": drawdown_monitor.trading_halted, "open_positions": open_positions, "capital_at_risk": capital_at_risk}
+"""
+Admin routes — supplementary endpoints for risk management.
+Core kill-switch, resume, and status endpoints live in positions.py.
+This module adds any additional admin-only operations.
+"""
+
+import logging
+from fastapi import APIRouter
+from ..services.coinbase_client import get_coinbase_client, COINBASE_BASE
+
+log = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@router.get("/status")
+async def admin_status():
+    """Basic admin health check."""
+    return {"status": "ok"}
+
+
+@router.get("/coinbase-probe")
+async def coinbase_probe():
+    """Probe Coinbase API for available product types and stock products."""
+    client = get_coinbase_client()
+    results = {}
+    for pt in ["SPOT", "FUTURE", "PERPETUAL_FUTURE", "STOCK"]:
+        try:
+            path = "/products"
+            headers = client._auth_headers("GET", path)
+            resp = await client._client.get(
+                f"{COINBASE_BASE}{path}",
+                headers=headers,
+                params={"limit": 5, "product_type": pt},
+            )
+            if resp.status_code == 200:
+                products = resp.json().get("products", [])
+                results[pt] = [p["product_id"] for p in products[:5]]
+            else:
+                results[pt] = f"HTTP {resp.status_code}"
+        except Exception as e:
+            results[pt] = str(e)
+
+    # Also check if any known stock tickers appear in SPOT
+    known = ["AAPL", "TSLA", "NVDA", "AMZN", "GOOGL", "MSFT"]
+    try:
+        headers = client._auth_headers("GET", "/products")
+        resp = await client._client.get(
+            f"{COINBASE_BASE}/products",
+            headers=headers,
+            params={"limit": 250, "product_type": "SPOT"},
+        )
+        all_ids = [p["product_id"] for p in resp.json().get("products", [])]
+        results["stock_tickers_found"] = [i for i in all_ids if i.split("-")[0] in known]
+        results["total_spot_products"] = len(all_ids)
+        # Show first product's full keys to understand structure
+        if resp.json().get("products"):
+            results["sample_fields"] = list(resp.json()["products"][0].keys())
+    except Exception as e:
+        results["spot_check_error"] = str(e)
+
+    return results

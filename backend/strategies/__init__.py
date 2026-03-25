@@ -261,6 +261,163 @@ ALL_STRATEGIES = [
         "synthetic_curve": _curve(55, trend=0.002, noise=0.018),
     },
     {
+        "id":         "xgboost",
+        "name":       "XGBoost",
+        "tagline":    "330 gradient corrections per prediction — where am I still wrong?",
+        "category":   "Machine Learning",
+        "risk":       "Medium",
+        "complexity": "Expert",
+        "color":      "#e879f9",
+        "status":     "live",
+        "params": [
+            {"name": "xgb_n_estimators",  "label": "Boost Rounds",    "default": 330,  "min": 10,   "max": 1000, "step": 10,   "desc": "Number of gradient correction cycles (trees)"},
+            {"name": "xgb_learning_rate", "label": "Learning Rate η", "default": 0.1,  "min": 0.01, "max": 0.5,  "step": 0.01, "desc": "Step size per correction — lower = more conservative"},
+            {"name": "xgb_max_depth",     "label": "Tree Depth",      "default": 3,    "min": 1,    "max": 8,    "step": 1,    "desc": "Max depth of each decision tree — keep shallow to reduce overfit"},
+            {"name": "xgb_train_frac",    "label": "Train Window",    "default": 0.30, "min": 0.10, "max": 0.70, "step": 0.05, "desc": "Fraction of history used for initial model training"},
+            {"name": "xgb_confidence",    "label": "Entry Confidence", "default": 0.55, "min": 0.50, "max": 0.90, "step": 0.01, "desc": "Min predicted P(up) required to enter long"},
+        ],
+        "formula": "F(m) = F(m-1) + η × (−∂L/∂F(m-1));  330 correction cycles;  enter if P(up) ≥ confidence",
+        "description": (
+            "Gradient boosting ensemble that trains 330 shallow decision trees, each correcting "
+            "the residual error of the previous. At each step the model asks: where am I still wrong?\n\n"
+            "Uses walk-forward validation — trains only on past data before each prediction — "
+            "eliminating lookahead bias. Features include rolling z-scores, multi-lag momentum, "
+            "directional ratios, and anchoring distance from 0.5.\n\n"
+            "Retrains incrementally as new data arrives."
+        ),
+        "logic": {
+            "entry": "xgb.predict_proba(features_t)[1] >= confidence AND no_position",
+            "exit":  "xgb.predict_proba(features_t)[1] < 0.50 OR prob_stop hit",
+            "size":  "full capital deployment on signal (Kelly sizing planned)",
+        },
+        "edge": (
+            "Gradient boosting captures non-linear relationships between probability momentum, "
+            "volatility regimes, and anchoring effects that rule-based strategies miss. "
+            "Walk-forward retraining keeps the model adapted to current market conditions."
+        ),
+        "risks": [
+            "Sparse probability histories (< 30 data points) produce unreliable models",
+            "Overfitting risk if n_estimators is too high relative to training set size",
+            "Training cost increases with history length — retrain frequency affects backtest speed",
+            "Features derived purely from price series; no fundamental signals included",
+            "Model performance highly sensitive to feature quality — garbage in, garbage out",
+        ],
+        "performance": {"win_rate": 0, "avg_return": 0, "sharpe": 0, "max_dd": 0, "trades": 0},
+        "synthetic_curve": _curve(11, trend=0.007, noise=0.028),
+    },
+    {
+        "id":         "short_momentum",
+        "name":       "Short Momentum",
+        "tagline":    "Short falling stocks, cover on reversal",
+        "category":   "Trend Following",
+        "risk":       "High",
+        "complexity": "Moderate",
+        "color":      "#ef4444",
+        "status":     "live",
+        "params": [
+            {"name": "stop_loss", "label": "Max Loss %", "default": 0.07, "min": 0.01, "max": 0.25, "step": 0.01, "desc": "Cover short if price rises this % above entry"},
+        ],
+        "formula": "∂p/∂t < 0 → Short;  ∂p/∂t > 0 → Cover;  (p - entry)/entry > stop → Cover forced",
+        "description": (
+            "Mirror of the Momentum Chaser — profits from sustained downtrends by going short. "
+            "Enters short when the price is falling tick-over-tick, covers when it reverses upward.\n\n"
+            "Best suited for stocks in clear downtrends. Uses a percentage stop loss to cap upside risk on the short."
+        ),
+        "logic": {
+            "entry": "p_t < p_{t-1} AND no_position",
+            "exit":  "p_t >= p_{t-1} OR (p_t - entry) / entry >= stop_loss",
+            "size":  "full capital (margin model)",
+        },
+        "edge": (
+            "Momentum persists in equity markets — particularly on the downside where fear amplifies selling. "
+            "Short momentum captures the asymmetric downside acceleration that long-only strategies cannot profit from."
+        ),
+        "risks": [
+            "Short squeezes — sudden upward reversals can rapidly exceed stop loss",
+            "Unlimited theoretical loss if price rises sharply without a stop in place",
+            "Whipsaw in choppy markets triggers many entries and forced covers",
+            "Short borrowing costs apply in real trading (modeled as zero here)",
+        ],
+        "performance": {"win_rate": 0, "avg_return": 0, "sharpe": 0, "max_dd": 0, "trades": 0},
+        "synthetic_curve": _curve(88, trend=-0.004, noise=0.045),
+    },
+    {
+        "id":         "short_zscore",
+        "name":       "Short Z-Score",
+        "tagline":    "Short overbought spikes, cover on mean reversion",
+        "category":   "Statistical Arbitrage",
+        "risk":       "High",
+        "complexity": "Advanced",
+        "color":      "#f43f5e",
+        "status":     "live",
+        "params": [
+            {"name": "zscore_window", "label": "Window (days)",  "default": 20,  "min": 5,   "max": 100, "step": 1,   "desc": "Rolling window for mean/std calculation"},
+            {"name": "zscore_entry",  "label": "Entry Z-Score",  "default": 1.5, "min": 0.5, "max": 4.0, "step": 0.1, "desc": "Short when z-score rises above +this value (overbought)"},
+            {"name": "zscore_exit",   "label": "Exit Z-Score",   "default": 0.0, "min":-2.0, "max": 2.0, "step": 0.1, "desc": "Cover when z-score reverts to or below this level"},
+            {"name": "stop_loss",     "label": "Loss Stop %",    "default": 0.07, "min": 0.01, "max": 0.25, "step": 0.01, "desc": "Cover if price rises this % above short entry"},
+        ],
+        "formula": "z = (p - μ_w) / σ_w;  z > +z_entry → Short;  z ≤ z_exit → Cover;  rise > stop → Cover forced",
+        "description": (
+            "Complement to Z-Score Reversion — shorts statistical overbought conditions instead of buying dips. "
+            "Enters short when the z-score spikes above +entry_z, covers on mean reversion back to exit_z.\n\n"
+            "Works best when a stock spikes on short-term sentiment without fundamental support, "
+            "then reverts. Pair with Short Momentum for full short-side coverage."
+        ),
+        "logic": {
+            "entry": "z_t > +z_entry AND no_position",
+            "exit":  "z_t <= z_exit OR (p_t - entry) / entry >= stop_loss",
+            "size":  "full capital (margin model)",
+        },
+        "edge": (
+            "Overbought stocks frequently revert after sentiment-driven spikes. "
+            "Z-score filters distinguish genuine breakouts from statistical noise, "
+            "giving a more selective entry than pure price momentum."
+        ),
+        "risks": [
+            "True breakouts can drive z-score higher for extended periods — stop loss essential",
+            "Earnings surprises or macro events can cause gap-up moves that bypass stops",
+            "Short borrowing costs apply in real trading (modeled as zero here)",
+            "Window too short creates noisy signals; too long misses short-term spikes",
+        ],
+        "performance": {"win_rate": 0, "avg_return": 0, "sharpe": 0, "max_dd": 0, "trades": 0},
+        "synthetic_curve": _curve(77, trend=-0.003, noise=0.035),
+    },
+    {
+        "id":         "wizard",
+        "name":       "Wizard",
+        "tagline":    "Run all strategies — let the best one win",
+        "category":   "Meta",
+        "risk":       "Variable",
+        "complexity": "Expert",
+        "color":      "#a855f7",
+        "status":     "live",
+        "params":     [],
+        "formula":    "winner = argmax_{s ∈ S} total_return(s, history)",
+        "description": (
+            "Runs every long strategy on the same price history simultaneously and returns "
+            "the one that performed best — no guesswork, no manual selection.\n\n"
+            "Rankings are shown for all strategies so you can see not just the winner "
+            "but how each one fared. Useful for quickly profiling a new market or asset "
+            "before committing to a strategy."
+        ),
+        "logic": {
+            "entry": "delegate to each strategy",
+            "exit":  "delegate to each strategy",
+            "size":  "winner = highest total_return; sharpe used as tiebreaker",
+        },
+        "edge": (
+            "Different market regimes favour different strategies. Wizard finds the best fit "
+            "empirically rather than requiring you to predict the regime in advance."
+        ),
+        "risks": [
+            "Winner is determined in-sample — results reflect past performance, not future",
+            "Takes longer than a single strategy run (6× the compute)",
+            "Does not ensemble or blend strategies — picks one winner only",
+        ],
+        "performance": {"win_rate": 0, "avg_return": 0, "sharpe": 0, "max_dd": 0, "trades": 0},
+        "synthetic_curve": _curve(42, trend=0.006, noise=0.025),
+    },
+    {
         "id":         "structure_harvest",
         "name":       "Structure Harvest",
         "tagline":    "Exploit resolution structure and time-decay",

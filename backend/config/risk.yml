@@ -1,0 +1,37 @@
+# PolyBack Risk Management Configuration
+# Imported by the backtest engine and (future) live trading engine.
+# Every simulated and live fill must pass these guardrails before execution.
+#
+# Modify here to adjust global risk parameters without touching strategy code.
+
+# ── Position limits ─────────────────────────────────────────────────────────
+position_limit: 0.05          # max 5 % of equity per single trade
+
+# ── Slippage & execution ────────────────────────────────────────────────────
+slippage_factor: 0.001        # 0.1 % assumed slippage for market orders (crypto)
+slippage_factor_stocks: 0.0005  # 0.05 % for stocks (tighter spreads)
+
+# ── Latency ─────────────────────────────────────────────────────────────────
+max_order_latency_ms: 30      # alert if order placement exceeds this
+
+# ── Stop-loss defaults (strategy overrides take precedence) ─────────────────
+default_stop_loss: 0.08       # 8 % hard stop for stocks/crypto
+default_stop_loss_pm: 0.10    # 10¢ absolute floor for prediction markets
+
+# ── Drawdown circuit-breakers ────────────────────────────────────────────────
+max_daily_drawdown: 0.03      # halt new positions if daily equity drops 3 %
+max_total_drawdown: 0.20      # halt all strategies if total drawdown exceeds 20 %
+
+# ── Kelly-specific ──────────────────────────────────────────────────────────
+kelly_max_fraction: 0.25      # cap Kelly bet size at 25 % of cash regardless of f*
+kelly_default_dip:  0.10      # recommended dip threshold for BTC/crypto (10 %)
+kelly_min_roi:      0.002     # 0.2 % minimum expected ROI before opening position
+
+# ── Market-making ────────────────────────────────────────────────────────────
+mm_min_spread_pct:  0.0002    # 0.02 % — tightest realistic spread for BTC
+mm_max_inventory:   0.10      # max 10 % of capital in a single MM position
+
+# ── Paper-trading safeguards ─────────────────────────────────────────────────
+paper_trading: true           # set to false to enable live order submission
+require_stop_loss: true       # reject any backtest/live trade with no stop configured
+log_every_fill: true          # log order, fill price, and slippage on every trade

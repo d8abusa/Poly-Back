@@ -30,7 +30,6 @@ async def _check_positions() -> None:
     if risk.is_halted():
         return
 
-    client   = get_exchange_client()
     open_pos = pt.get_open()
 
     if not open_pos:
@@ -39,6 +38,7 @@ async def _check_positions() -> None:
     for pos in open_pos:
         market_id = pos["market_id"]
         pos_id    = pos["id"]
+        client    = get_exchange_client(pos.get("exchange", "coinbase"))
 
         try:
             price = await client.get_last_price(market_id)

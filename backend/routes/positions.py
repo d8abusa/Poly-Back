@@ -1,6 +1,7 @@
 import logging
+import os
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from ..services import position_tracker as pt
@@ -8,6 +9,14 @@ from ..services import risk_manager as risk
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/positions", tags=["positions"])
+
+
+def _require_admin(x_admin_token: str = Header(default="")):
+    expected = os.getenv("ADMIN_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="ADMIN_TOKEN not configured")
+    if x_admin_token != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
 class ResumeRequest(BaseModel):
@@ -74,17 +83,20 @@ async def get_risk_status():
     return risk.get_status()
 
 
-@router.post("/risk/kill")
+@router.post("/risk/kill", dependencies=[Depends(_require_admin)])
 async def kill_switch(reason: str = Query(default="manual_kill_switch")):
     """
     Hard kill switch — flattens all open positions and halts the system.
     Use in emergencies. Requires manual resume to restart trading.
+    Requires X-Admin-Token header.
     """
     log.critical("KILL SWITCH activated via API. Reason: %s", reason)
     return await risk.flatten_all_and_halt(reason=reason)
 
 
-@router.post("/risk/resume")
+@router.post("/risk/resume", dependencies=[Depends(_require_admin)])
 async def resume_trading(body: ResumeRequest):
-    """Resume trading after a halt. Requires an explicit override reason."""
+    """Resume trading after a halt. Requires an explicit override reason.
+    Requires X-Admin-Token header.
+    """
     return risk.resume_trading(override_reason=body.override_reason)

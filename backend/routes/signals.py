@@ -21,6 +21,12 @@ def _is_coinbase_signal(market_id: str) -> bool:
     return any(market_id.upper().endswith(s) for s in _COINBASE_SUFFIXES)
 
 
+def _infer_exchange(market_id: str) -> str:
+    if _is_coinbase_signal(market_id):
+        return "coinbase"
+    return "kalshi"  # default for prediction markets
+
+
 @router.get("")
 async def list_signals(status: Optional[str] = None):
     """List signals filtered by status. Valid values: pending | approved | rejected"""
@@ -86,7 +92,7 @@ async def approve_signal(
         _crypto_pending.discard(sig.market_id)
 
         # Record as a position in tracker (adapts to crypto scale)
-        pos = pt.open_position(sig)
+        pos = pt.open_position(sig, exchange="coinbase")
         log.info(
             "Coinbase order placed: %s %s %.8f @ %.4f  order_id=%s  pos=%s",
             sig.market_id, sig.side, shares, sig.entry_price,
@@ -103,7 +109,7 @@ async def approve_signal(
         }
 
     # ── Prediction market signal → existing flow ───────────────────────────
-    pos = pt.open_position(sig)
+    pos = pt.open_position(sig, exchange=_infer_exchange(sig.market_id))
     log.info("Approved signal %s  size=%d  position=%s", signal_id, sig.suggested_size, pos["id"])
     return {"status": "approved", "signal": sig, "position_id": pos["id"]}
 

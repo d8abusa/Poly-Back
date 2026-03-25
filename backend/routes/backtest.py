@@ -12,6 +12,7 @@ from ..services.exchange_router import get_exchange_client
 from ..services.backtest_engine import PredictionMarketBacktester, run_batch
 from ..services.macro_context import get_macro_context
 from ..services.fred_prior import calibrate_from_title
+from ..services.db import save_backtest_run, get_backtest_runs, get_backtest_run, purge_old_records
 
 log = logging.getLogger(__name__)
 
@@ -103,20 +104,74 @@ async def run_backtest_batch(req: BatchBacktestRequest, exchange: str = "polymar
         market_ids, token_ids=token_ids, interval=req.interval
     )
 
+    # Stocks trade on daily candles — enforce a 3-day minimum hold to avoid
+    # whipsaw re-entries that prediction market strategies trigger every tick.
+    min_hold = 3 if exchange == "yahoo" else 1
+
+    # Default stock backtests to the last 365 days when no window is specified.
+    # Without this, Yahoo returns history back to IPO (AAPL → 1980) and the
+    # backtest runs on decades of irrelevant data.
+    from datetime import date, timedelta
+    if exchange == "yahoo" and not req.date_from and not req.date_to:
+        effective_date_from = (date.today() - timedelta(days=365)).isoformat()
+        effective_date_to   = date.today().isoformat()
+    else:
+        effective_date_from = req.date_from
+        effective_date_to   = req.date_to
+
+    # Shared strategy params forwarded from the batch request.
+    # Exclude batch-only fields so the per-market BacktestRequest gets everything else.
+    shared = req.model_dump(exclude={"markets", "execution_mode", "date_from", "date_to"})
+
     pairs: list[tuple[BacktestRequest, list]] = []
     for market in req.markets:
         bt_req = BacktestRequest(
+            **shared,
             condition_id=market.condition_id,
             token_id=market.token_id,
-            strategy=req.strategy,
-            entry_threshold=req.entry_threshold,
-            exit_threshold=req.exit_threshold,
-            stop_loss=req.stop_loss,
-            initial_capital=req.initial_capital,
-            interval=req.interval,
+            min_hold_days=min_hold,
+            date_from=effective_date_from,
+            date_to=effective_date_to,
         )
         # Histories keyed by token_id (Polymarket) or market_id for others
         history = histories.get(market.token_id) or histories.get(market.condition_id, [])
         pairs.append((bt_req, history))
 
-    return run_batch(pairs, fetch_duration_ms=fetch_ms)
+    batch = run_batch(pairs, fetch_duration_ms=fetch_ms)
+
+    # Persist run to DB (fire-and-forget — don't fail the response if it errors)
+    try:
+        save_backtest_run(batch, strategy=req.strategy, exchange=exchange)
+    except Exception as exc:
+        log.warning("Failed to persist backtest run: %s", exc)
+
+    return batch
+
+
+@router.get("/history")
+async def backtest_history(limit: int = 50, offset: int = 0):
+    """Return persisted backtest runs, newest first."""
+    try:
+        runs = get_backtest_runs(limit=limit, offset=offset)
+        return {"runs": runs, "count": len(runs)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/history/{run_id}")
+async def backtest_run_detail(run_id: str):
+    """Return full detail for a single saved backtest run."""
+    run = get_backtest_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
+
+@router.delete("/history/purge")
+async def purge_history(retention_days: int = 90):
+    """Delete records older than retention_days. Returns deleted row counts."""
+    try:
+        counts = purge_old_records(retention_days=retention_days)
+        return {"deleted": counts, "retention_days": retention_days}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

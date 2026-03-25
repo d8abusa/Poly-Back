@@ -1,0 +1,4 @@
+threshold_pct,entry_count,total_return_pct,sharpe,max_drawdown_pct,win_rate_pct
+5.0,2,-8.84,-0.661,8.84,0.0
+10.0,2,-9.11,-1.388,9.11,0.0
+15.0,2,-9.09,-1.741,9.09,0.0
