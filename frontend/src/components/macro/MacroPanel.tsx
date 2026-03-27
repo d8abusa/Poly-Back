@@ -1,4 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
+import CorrelationHeatmap from "./CorrelationHeatmap";
+import ParallelCoords from "./ParallelCoords";
+import SurfacePlot from "./SurfacePlot";
+import CorrelationNetwork from "./CorrelationNetwork";
+import CubeHeatmap from "./CubeHeatmap";
+import UmapScatter from "./UmapScatter";
+import {
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  ResponsiveContainer, Tooltip, Legend,
+} from "recharts";
 import { apiFetch } from "../../lib/apiFetch";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -53,6 +63,14 @@ interface BudgetInfo {
   budget:    number;
   remaining: number;
   warning:   boolean;
+}
+
+interface RadarSpoke {
+  indicator: string;
+  series_id: string;
+  current:   number | null;
+  avg:       number | null;
+  raw:       number | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -140,20 +158,23 @@ export default function MacroPanel() {
   const [ctx, setCtx]           = useState<MacroContext | null>(null);
   const [dash, setDash]         = useState<FredDashboard | null>(null);
   const [budget, setBudget]     = useState<BudgetInfo | null>(null);
+  const [radar, setRadar]       = useState<RadarSpoke[]>([]);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [error, setError]       = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [ctxRes, dashRes, budRes] = await Promise.all([
+      const [ctxRes, dashRes, budRes, radarRes] = await Promise.all([
         apiFetch("/api/fred/macro-context").then(r => r.ok ? r.json() : null),
         apiFetch("/api/fred/dashboard").then(r => r.ok ? r.json() : null),
         apiFetch("/api/fred/budget").then(r => r.ok ? r.json() : null),
+        apiFetch("/api/fred/radar").then(r => r.ok ? r.json() : null),
       ]);
-      if (ctxRes)  setCtx(ctxRes);
-      if (dashRes) setDash(dashRes);
-      if (budRes)  setBudget(budRes);
+      if (ctxRes)           setCtx(ctxRes);
+      if (dashRes)          setDash(dashRes);
+      if (budRes)           setBudget(budRes);
+      if (radarRes?.spokes) setRadar(radarRes.spokes);
     } catch (e) {
       setError("Failed to load macro data");
     }
@@ -218,6 +239,71 @@ export default function MacroPanel() {
 
       {error && (
         <div style={{ fontSize: 10, color: "#ef4444" }}>{error}</div>
+      )}
+
+      {/* ── Radar chart — regime fingerprint ──────────────────────────── */}
+      {radar.length > 0 && (
+        <div style={{
+          background: "var(--surface2)", border: "1px solid var(--border2)",
+          borderRadius: 8, padding: "14px 16px",
+        }}>
+          <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+            Regime Fingerprint
+          </div>
+          <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
+            0 = benign · 100 = maximum stress &nbsp;·&nbsp; dashed = recent avg
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <RadarChart data={radar} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
+              <PolarGrid stroke="var(--border2)" />
+              <PolarAngleAxis
+                dataKey="indicator"
+                tick={{ fill: "var(--muted2)", fontSize: 10, fontFamily: "IBM Plex Mono, monospace" }}
+              />
+              <PolarRadiusAxis
+                angle={90}
+                domain={[0, 100]}
+                tick={{ fill: "var(--muted)", fontSize: 8 }}
+                tickCount={3}
+                stroke="var(--border)"
+              />
+              <Radar
+                name="Current"
+                dataKey="current"
+                stroke="#00d4a8"
+                fill="#00d4a8"
+                fillOpacity={0.25}
+                strokeWidth={2}
+                dot={{ r: 3, fill: "#00d4a8", strokeWidth: 0 }}
+              />
+              <Radar
+                name="Recent avg"
+                dataKey="avg"
+                stroke="#94a3b8"
+                fill="none"
+                strokeDasharray="4 3"
+                strokeWidth={1.5}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: "var(--surface2)", border: "1px solid var(--border2)",
+                  borderRadius: 6, fontSize: 10, fontFamily: "IBM Plex Mono, monospace",
+                  color: "var(--text)",
+                }}
+                formatter={(value: number, name: string, props: any) => {
+                  const raw = props.payload?.raw;
+                  return [
+                    `${value?.toFixed(0)}/100${raw != null ? ` (${raw})` : ""}`,
+                    name,
+                  ];
+                }}
+              />
+              <Legend
+                wrapperStyle={{ fontSize: 9, fontFamily: "IBM Plex Mono, monospace", color: "var(--muted2)", paddingTop: 8 }}
+              />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
       )}
 
       {/* Regime gauges + strategy modifiers side by side */}
@@ -429,6 +515,25 @@ export default function MacroPanel() {
           </div>
         </div>
       )}
+
+      {/* ── Correlation heatmap ───────────────────────────────────────── */}
+      <CorrelationHeatmap />
+
+      {/* ── Parallel coordinates ──────────────────────────────────────── */}
+      <ParallelCoords />
+
+      {/* ── 3D surface ────────────────────────────────────────────────── */}
+      <SurfacePlot />
+
+      {/* ── Correlation network ───────────────────────────────────────── */}
+      <CorrelationNetwork />
+
+      {/* ── 3D cube heatmap ───────────────────────────────────────────── */}
+      <CubeHeatmap />
+
+      {/* ── UMAP regime scatter ───────────────────────────────────────── */}
+      <UmapScatter />
+
     </div>
   );
 }

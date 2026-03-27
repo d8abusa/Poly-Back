@@ -14,8 +14,10 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.9",
     "@mui/material": "^7.3.9",
+    "plotly.js-dist-min": "^3.4.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-plotly.js": "^2.6.0",
     "recharts": "^3.8.0"
   },
   "devDependencies": {
