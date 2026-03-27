@@ -124,6 +124,14 @@ export interface StrategyParams {
   window:        number;
   momentum_min:  number;
   trail_pct:     number;
+  // Mean Reversion
+  lookback_window:     number;
+  reversion_threshold: number;
+  // Wizard
+  wizard_windows:    number;
+  wizard_strategies: string[];
+  // Universal
+  slippage_bps: number;
 }
 
 export interface TradeEntry {
@@ -141,6 +149,14 @@ export interface EquityPoint {
   price: number;
 }
 
+export interface RegimeSplit {
+  window:   number;
+  start?:   number;
+  end?:     number;
+  trend:    "bull" | "bear" | "sideways" | "unknown";
+  rankings: WizardRanking[];
+}
+
 export interface WizardRanking {
   strategy:     string;
   name:         string;
@@ -149,6 +165,8 @@ export interface WizardRanking {
   max_drawdown: number;
   win_rate:     number;
   total_trades: number;
+  wins?:        number;
+  consistency?: number;
 }
 
 export interface BacktestResult {
@@ -165,6 +183,7 @@ export interface BacktestResult {
   equity_curve: EquityPoint[];
   trades: TradeEntry[];
   wizard_rankings?: WizardRanking[];
+  regime_splits?:   RegimeSplit[];
 }
 
 export interface BatchBacktestResult {
@@ -179,6 +198,7 @@ export interface HistoryRun {
   id: string;
   runAt: string;         // ISO timestamp
   strategy: string;
+  exchange: ExchangeId;
   marketTitles: string[];
   batch: BatchBacktestResult;
 }

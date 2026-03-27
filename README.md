@@ -1,9 +1,8 @@
-# PolyBack — Prediction Market Backtester & Live Feed
+# PolyBack — Quant Trading Platform
 
-A full-stack research platform for Polymarket — backtest trading strategies against historical price data, watch live order books, and manage an execution pipeline from signal to position.
+A full-stack research and live-execution platform for prediction markets and equities. Backtest 10+ strategies against historical data, monitor macro regime signals from FRED, stage signals, and route live orders to Polymarket, Kalshi, or Coinbase Advanced Trade.
+
 <img width="1535" height="880" alt="image" src="https://github.com/user-attachments/assets/9ab1f8f2-fb43-44e5-9c0c-57da6d17ba25" />
-
-
 
 ---
 
@@ -12,9 +11,12 @@ A full-stack research platform for Polymarket — backtest trading strategies ag
 | Layer | Technology |
 |-------|-----------|
 | Backend | Python 3.13, FastAPI, httpx (async), Pydantic v2, NumPy, pandas |
-| Frontend | React 19, TypeScript, Vite, Recharts |
-| Data | Polymarket public CLOB API + Gamma API (no account required for read-only) |
-| Auth | EIP-712 signed L1 wallet credentials (optional, enables order placement) |
+| Frontend | React 18, TypeScript, Vite, Recharts |
+| Database | PostgreSQL (`polyback_db`) |
+| Auth | JWT (single-user, password-based) |
+| TLS | mkcert self-signed certs — both servers run HTTPS |
+| Exchanges | Polymarket CLOB · Kalshi · Coinbase Advanced Trade · Yahoo Finance (stocks) · Manifold |
+| Macro Data | FRED (St. Louis Fed) — 8 series, local PostgreSQL cache |
 
 ---
 
@@ -25,7 +27,8 @@ A full-stack research platform for Polymarket — backtest trading strategies ag
 | Python | 3.11+ |
 | Node.js | 18+ |
 | npm | 9+ |
-| git | any |
+| PostgreSQL | 14+ |
+| mkcert | any |
 
 ---
 
@@ -33,45 +36,58 @@ A full-stack research platform for Polymarket — backtest trading strategies ag
 
 ```
 Polymarket/
+├── start.sh                             # One-command TLS startup (backend + frontend)
+├── .env                                 # Credentials and secrets (never committed)
 ├── backend/
-│   ├── main.py                          # FastAPI app entry point
-│   ├── config.py                        # .env loader, auth level detection
+│   ├── main.py                          # FastAPI app entry point + router registration
+│   ├── middleware/
+│   │   └── auth.py                      # JWT generation and verification
 │   ├── routes/
+│   │   ├── auth.py                      # POST /api/auth/login
 │   │   ├── markets.py                   # Market search, detail, price history
-│   │   ├── backtest.py                  # Single + batch backtest execution
-│   │   ├── strategies.py                # Strategy metadata catalogue
-│   │   ├── feed.py                      # Live order book, trades, snapshot
-│   │   ├── signals.py                   # Signal queue management
-│   │   └── positions.py                 # Open / closed position tracking
+│   │   ├── backtest.py                  # Single + batch backtest, history CRUD
+│   │   ├── strategies.py                # Strategy catalogue with metadata
+│   │   ├── signals.py                   # Signal queue + stage-from-backtest
+│   │   ├── positions.py                 # Open / closed positions, risk controls
+│   │   ├── fred.py                      # FRED macro data + dashboard
+│   │   ├── feed.py                      # Live order book + trade stream
+│   │   ├── watchlist.py                 # Watchlist + price alerts
+│   │   ├── scanner.py                   # Live market scanner
+│   │   └── settings.py                  # Exchange API key management
 │   ├── services/
-│   │   ├── polymarket_client.py         # Async CLOB + Gamma API client
 │   │   ├── backtest_engine.py           # All strategy implementations
-│   │   ├── signal_queue.py              # In-memory signal store
-│   │   ├── position_tracker.py          # In-memory position store
-│   │   ├── execute_order.py             # Order execution (auto/confirm/alert)
-│   │   └── alert_service.py             # Alert-only notification stub
-│   ├── models/
-│   │   └── schemas.py                   # Pydantic request/response models
-│   └── strategies/
-│       └── __init__.py                  # Strategy catalogue with metadata
-├── frontend/
-│   └── src/
-│       ├── pages/
-│       │   └── BacktestConsole.tsx      # Root page — owns all shared state
-│       ├── components/
-│       │   ├── backtest/                # BacktestPanel, Results, ParamSliders, BulkLoadModal, StrategyControls
-│       │   ├── charts/                  # PriceChart, EquityChart, PnLDistribution
-│       │   ├── execution/               # SignalQueue, ConfirmationCard, ExecutionLog, ExecutionModeToggle
-│       │   ├── feed/                    # LiveFeed (order book + trade stream)
-│       │   ├── history/                 # HistoryView (PnL charts + closed trade log)
-│       │   ├── market/                  # MarketSearch, MarketCard, MarketDetail
-│       │   ├── positions/               # PositionTracker
-│       │   └── shared/                  # HistoryDrawer, RunCard, AuthStatus
-│       ├── types.ts
-│       └── styles.ts
-├── get_api_key.py                       # Utility: derive Polymarket API credentials from wallet key
-├── requirements.txt
-└── .env                                 # Credentials (never committed)
+│   │   ├── fred_service.py              # FRED API client + cache management
+│   │   ├── macro_context.py             # Macro regime derivation from FRED cache
+│   │   ├── fred_prior.py                # FRED-calibrated Kelly prior for PM markets
+│   │   ├── stop_loss_executor.py        # Background stop-loss + target monitor
+│   │   ├── live_scanner.py              # Signal scanner (prediction markets)
+│   │   ├── crypto_scanner.py            # Signal scanner (crypto via Coinbase)
+│   │   ├── risk_manager.py              # Circuit breaker + drawdown limits
+│   │   ├── exchange_router.py           # Exchange client factory
+│   │   ├── polymarket_client.py         # Polymarket CLOB + Gamma API
+│   │   ├── coinbase_client.py           # Coinbase Advanced Trade API
+│   │   ├── signal_queue.py              # In-memory + DB-backed signal store
+│   │   ├── position_tracker.py          # Position store with PnL tracking
+│   │   └── db.py                        # PostgreSQL connection + schema init
+│   └── models/
+│       └── schemas.py                   # Pydantic request/response models
+└── frontend/
+    └── src/
+        ├── pages/
+        │   └── BacktestConsole.tsx      # Root page — owns all shared state
+        └── components/
+            ├── backtest/                # BacktestPanel, Results, ParamSliders,
+            │                            #   StrategyControls, BulkLoadModal, ScannerControls
+            ├── macro/                   # MacroPanel — FRED regime dashboard
+            ├── charts/                  # PriceChart, EquityChart, PnLDistribution
+            ├── execution/               # SignalQueue, ExecutionLog, ExecutionModeToggle
+            ├── feed/                    # LiveFeed (order book + trade stream)
+            ├── history/                 # HistoryView (closed trade log + PnL)
+            ├── market/                  # MarketSearch, MarketCard, MarketDetail
+            ├── positions/               # PositionTracker
+            ├── runs/                    # RunsView (saved backtest history)
+            └── shared/                  # AuthStatus, LoginScreen, SettingsPanel,
+                                         #   StrategyDetailPanel, Watchlist
 ```
 
 ---
@@ -89,7 +105,7 @@ cd Polymarket
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -100,121 +116,122 @@ cd frontend
 npm install
 ```
 
+### 4. PostgreSQL
+
+```bash
+createdb polyback_db
+createuser polyback
+psql -c "ALTER USER polyback WITH PASSWORD 'yourpassword';"
+psql -c "GRANT ALL PRIVILEGES ON DATABASE polyback_db TO polyback;"
+```
+
+The schema is created automatically on first startup.
+
+### 5. TLS certificates
+
+```bash
+# Install mkcert: https://github.com/FiloSottile/mkcert
+mkcert -install
+mkdir certs && cd certs
+mkcert localhost 127.0.0.1 10.0.0.46   # replace with your LAN IP if needed
+```
+
 ---
 
 ## Configuration
 
-Copy the template and fill in your credentials (all fields are optional for read-only mode):
-
-```bash
-# .env is already present at the project root — edit it directly
-```
+Create `.env` in the project root:
 
 ```dotenv
-# .env
-POLY_API_KEY=
-POLY_API_SECRET=
-POLY_API_PASSPHRASE=
-POLY_PRIVATE_KEY=        # Required only for order placement
-POLY_CHAIN_ID=137        # 137 = Polygon mainnet, 80002 = Amoy testnet
+# PostgreSQL
+DATABASE_URL=postgresql://polyback:yourpassword@localhost:5432/polyback_db
+
+# Authentication
+ADMIN_PASSWORD_HASH=<sha256 of your password>
+# python3 -c "import hashlib; print(hashlib.sha256(b'yourpassword').hexdigest())"
+JWT_SECRET=<random 64-char hex string>
+JWT_EXPIRE_MINUTES=480
+
+# FRED (St. Louis Fed) — free tier: 100 API calls
+FRED_API_KEY=<your key from fred.stlouisfed.org>
+
+# Stop-loss executor
+STOP_LOSS_ENABLED=true
+STOP_LOSS_POLL_INTERVAL=30
 ```
 
-**Auth levels** (shown as a coloured dot in the app header):
+Exchange credentials go in `backend/.env`:
 
-| Dot colour | Level | Capabilities |
-|------------|-------|-------------|
-| Grey | Public | Read public market data |
-| Amber | API Only | + Read private account data |
-| Green | Full Auth | + Place and cancel orders |
+```dotenv
+# Coinbase Advanced Trade
+COINBASE_KEY_NAME=organizations/.../apiKeys/...
+COINBASE_PRIVATE_KEY=-----BEGIN EC PRIVATE KEY-----\n...
 
-### Getting API credentials
-
-If you have a Polymarket account with a funded wallet, run:
-
-```bash
-source venv/bin/activate
-python get_api_key.py --key 0xYOUR_PRIVATE_KEY
+# Kalshi
+KALSHI_API_KEY=<your key>
 ```
-
-Paste the printed `POLY_API_KEY`, `POLY_API_SECRET`, and `POLY_API_PASSPHRASE` values into `.env`.
-Alternatively set `POLY_PRIVATE_KEY` in `.env` first and run without `--key`.
 
 ---
 
 ## Running
 
-Open two terminals:
-
-**Terminal 1 — Backend**
 ```bash
-cd ~/quant_project/Polymarket
-source venv/bin/activate
-uvicorn backend.main:app --reload --port 8000
+# From project root — starts backend (:8000) and frontend (:5173) with TLS
+./start.sh
 ```
 
-**Terminal 2 — Frontend**
+Or manually:
+
 ```bash
-cd ~/quant_project/Polymarket/frontend
+# Terminal 1 — Backend
+source venv/bin/activate
+uvicorn backend.main:app \
+  --host 0.0.0.0 --port 8000 \
+  --ssl-certfile certs/localhost+2.pem \
+  --ssl-keyfile certs/localhost+2-key.pem \
+  --env-file .env
+
+# Terminal 2 — Frontend
+cd frontend
 npm run dev
 ```
 
 | URL | Description |
 |-----|-------------|
-| http://localhost:5173 | App |
-| http://localhost:8000/docs | Swagger / interactive API docs |
-
----
-
-## API Reference
-
-### Markets
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| GET | `/api/markets` | Search markets — params: `q`, `limit`, `offset`, `active`, `closed`, `order`, `tag_slug` |
-| GET | `/api/markets/tags` | Available category tags |
-| GET | `/api/markets/{condition_id}` | Single market detail |
-| GET | `/api/markets/{condition_id}/history` | Price history — params: `token_id`, `interval`, `fidelity` |
-
-### Backtest
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| POST | `/api/backtest` | Single market backtest |
-| POST | `/api/backtest/batch` | Batch backtest across multiple markets |
-| GET | `/api/strategies` | Strategy catalogue with metadata |
-
-### Live Feed
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| GET | `/api/feed/snapshot` | Combined: order book + trades + price + market status |
-| GET | `/api/feed/book` | Order book only — param: `token_id` |
-| GET | `/api/feed/trades` | Recent trades — params: `token_id`, `limit` |
-| GET | `/api/feed/auth/status` | Current auth level and capabilities |
-
-### Execution
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| GET | `/api/signals` | Pending signal queue |
-| POST | `/api/signals/{id}/approve` | Approve a signal |
-| POST | `/api/signals/{id}/reject` | Reject a signal |
-| GET | `/api/positions` | Open positions |
-| GET | `/api/positions/closed` | Closed position history |
-| POST | `/api/positions/{id}/close` | Close a position |
+| https://localhost:5173 | App |
+| https://localhost:8000/docs | Swagger / interactive API docs |
 
 ---
 
 ## Backtest Strategies
 
-| Strategy | Description | Key Parameters |
-|----------|-------------|----------------|
-| `threshold` | Buy when prob ≤ entry threshold, sell when prob ≥ exit threshold | `entry_threshold`, `exit_threshold`, `stop_loss` |
-| `momentum` | Buy when probability trend is rising, sell when falling | `entry_threshold`, `exit_threshold`, `stop_loss` |
-| `zscore_reversion` | Mean-reversion on rolling z-score of probability | `zscore_window`, `zscore_entry`, `zscore_exit`, `zscore_stop` |
-| `kelly` | Kelly criterion position sizing with dynamic win-rate | `kelly_fraction`, `entry_threshold`, `exit_threshold` |
-| `market_making` | Straddle bid/ask around midpoint | `mm_spread`, `stop_loss` |
+| Strategy | Type | Description |
+|----------|------|-------------|
+| `threshold` | Long | Buy on dip from rolling high (stocks) or prob ≤ entry (PM) |
+| `momentum` | Long | Breakout above rolling high with trailing stop |
+| `zscore_reversion` | Long | Mean-reversion on rolling z-score of price/probability |
+| `mean_reversion` | Long | Fade deviations beyond N std devs from rolling mean |
+| `kelly` | Long | Kelly criterion sizing with FRED-calibrated true probability |
+| `market_making` | Neutral | Straddle bid/ask around midpoint |
+| `xgboost` | Long | ML classifier trained on price features + FRED macro vector |
+| `swing_reversion` | Long | Multi-day swing fade with configurable hold window |
+| `short_momentum` | Short | Fade price breakdowns below rolling low |
+| `short_zscore` | Short | Short when z-score exceeds upper band |
+| `wizard` | Long | Runs all long strategies, returns the best performer |
+
+### Macro Regime Gate (stocks / Yahoo exchange)
+
+All stock strategies consult the live FRED macro context before entering a position:
+
+| Recession Risk | Fed Stance | Inflation | Position Size |
+|---|---|---|---|
+| `high` | any | any | **Blocked** |
+| `medium` | tightening | any | ×50% |
+| `medium` | other | any | ×65% |
+| `low` | tightening | above target | ×70% |
+| `low` | tightening | other | ×85% |
+| `low` | other | above target | ×80% |
+| `low` | easing/neutral | at/below target | ×100% |
 
 ---
 
@@ -222,15 +239,83 @@ npm run dev
 
 | Mode | Behaviour |
 |------|-----------|
-| **Confirm** | Signals appear in queue — manually approve or reject each |
-| **Auto** | Signals execute immediately (requires Full Auth) |
-| **Alert Only** | Signals are logged but never executed |
+| **Confirm** | Signal appears in queue — manually approve or reject |
+| **Auto** | Signal executes immediately; stop-loss is required |
+| **Alert Only** | Signal is logged but never routed to an exchange |
+
+A background stop-loss executor polls open positions every 30 seconds and auto-closes on breach (places a real exchange order for Coinbase positions).
+
+---
+
+## FRED Macro Dashboard
+
+The **Macro** tab shows live regime signals derived from 8 cached FRED series:
+
+| Series | Description | Frequency |
+|--------|-------------|-----------|
+| T10Y2Y | 10Y-2Y Treasury Spread (recession signal) | Daily |
+| DFEDTARU | Fed Funds Target Upper Bound | Daily |
+| CPIAUCSL | CPI All Urban Consumers | Monthly |
+| UNRATE | Unemployment Rate | Monthly |
+| PAYEMS | Nonfarm Payrolls | Monthly |
+| DTWEXBGS | US Dollar Index (Broad) | Weekly |
+| GDP | Real GDP | Quarterly |
+
+FRED has a 100-call free tier. The cache auto-refreshes on the series release schedule — monthly series re-check every 32 days, daily series every 7 days. Each refresh costs 2 calls.
+
+---
+
+## API Reference
+
+### Auth
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/auth/login` | Exchange password for JWT Bearer token |
+
+### Markets
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/markets` | Search markets — params: `q`, `limit`, `exchange`, `active` |
+| GET | `/api/markets/{id}/history` | Price history — params: `token_id`, `interval` |
+
+### Backtest
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/backtest/batch` | Batch backtest across multiple markets |
+| GET | `/api/backtest/history` | Saved backtest runs |
+| DELETE | `/api/backtest/history/purge` | Purge runs older than N days |
+
+### Signals
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/signals` | Pending signal queue |
+| POST | `/api/signals/from-backtest` | Stage a signal derived from backtest metrics |
+| POST | `/api/signals/{id}/approve` | Approve (routes real order for Coinbase signals) |
+| POST | `/api/signals/{id}/reject` | Reject |
+
+### Positions
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/positions` | Open positions |
+| GET | `/api/positions/closed` | Closed position history |
+| POST | `/api/positions/{id}/close` | Close a position |
+| GET | `/api/positions/risk/status` | Circuit breaker status |
+| POST | `/api/positions/risk/kill` | Emergency halt |
+
+### FRED / Macro
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/fred/macro-context` | Current macro regime + strategy modifiers |
+| GET | `/api/fred/dashboard` | Snapshot of all series (no API call) |
+| GET | `/api/fred/budget` | Remaining FRED API pull budget |
+| POST | `/api/fred/{series_id}/refresh` | Force refresh a series (costs 2 pulls) |
 
 ---
 
 ## Notes
 
-- Position and signal state is **in-memory** — it resets on backend restart. SQLite persistence is a planned next step.
-- The live feed polls every **8 seconds** by default (`POLL_MS` in `LiveFeed.tsx`).
-- The market list fetches `limit=100` sorted by volume. The Feed tab fetches its own active-only market list independently.
-- `get_api_key.py` uses EIP-712 structured data signing (`eth-account` library) — your private key is never transmitted.
+- All API routes except `/api/auth/login` require a `Bearer <token>` header.
+- The stop-loss executor runs as a background asyncio task — resets on server restart.
+- Yahoo Finance (stocks/ETFs/indexes) is supported via `exchange=yahoo` — no API key required.
+- Manifold Markets is play-money only — order routing is disabled.
+- `.env` files and `certs/` are gitignored — never commit credentials.

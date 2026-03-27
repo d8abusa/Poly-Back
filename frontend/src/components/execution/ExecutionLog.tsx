@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { Signal } from "../../types";
+import { apiFetch } from "../../lib/apiFetch";
 
 interface LogEntry extends Signal {
   _type: "executed" | "rejected";
@@ -12,8 +13,8 @@ export default function ExecutionLog() {
     const load = async () => {
       try {
         const [approvedRes, rejectedRes] = await Promise.all([
-          fetch("/api/signals?status=approved"),
-          fetch("/api/signals?status=rejected"),
+          apiFetch("/api/signals?status=approved"),
+          apiFetch("/api/signals?status=rejected"),
         ]);
         if (!approvedRes.ok || !rejectedRes.ok) return;
         const [approvedData, rejectedData] = await Promise.all([

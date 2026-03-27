@@ -3,6 +3,7 @@ import ExecutionModeToggle from "../execution/ExecutionModeToggle";
 import ParamSliders from "./ParamSliders";
 import FormulaTooltip from "./FormulaTooltip";
 import type { ExecutionMode, StrategyMeta, StrategyParams } from "../../types";
+import { apiFetch } from "../../lib/apiFetch";
 
 interface StrategyControlsProps {
   activeStrategy: string;
@@ -12,6 +13,8 @@ interface StrategyControlsProps {
   executionMode: ExecutionMode;
   onExecutionModeChange: (mode: ExecutionMode) => void;
   exchange?: string;
+  capital: number;
+  onCapitalChange: (v: number) => void;
 }
 
 // Strategies the backtest engine actually executes
@@ -42,12 +45,14 @@ export default function StrategyControls({
   executionMode,
   onExecutionModeChange,
   exchange,
+  capital,
+  onCapitalChange,
 }: StrategyControlsProps) {
   const [strategies, setStrategies] = useState<StrategyFull[]>(FALLBACK);
   const [hoveredStrategy, setHoveredStrategy] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/strategies")
+    apiFetch("/api/strategies")
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data?.strategies?.length) return;
@@ -203,7 +208,38 @@ export default function StrategyControls({
       </div>
 
       <ParamSliders strategy={activeStrategy} params={strategyParams} onChange={onParamsChange} exchange={exchange} />
-      <ExecutionModeToggle mode={executionMode} onChange={onExecutionModeChange} />
+      <ExecutionModeToggle mode={executionMode} onChange={onExecutionModeChange} exchange={exchange} />
+
+      {/* Capital input */}
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+          Capital
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 11, color: "var(--muted2)", fontFamily: "IBM Plex Mono, monospace" }}>$</span>
+          <input
+            type="number"
+            min={0}
+            step={100}
+            value={capital === 0 ? "" : capital}
+            placeholder="0"
+            onChange={e => {
+              const v = parseFloat(e.target.value);
+              onCapitalChange(isNaN(v) || v < 0 ? 0 : v);
+            }}
+            style={{
+              flex: 1, background: "var(--surface2)",
+              border: `1px solid ${capital === 0 ? "rgba(239,68,68,0.4)" : "var(--border2)"}`,
+              borderRadius: 5, padding: "5px 8px",
+              color: capital === 0 ? "#ef4444" : "var(--text)",
+              fontFamily: "IBM Plex Mono, monospace", fontSize: 11, outline: "none",
+            }}
+          />
+        </div>
+        <div style={{ fontSize: 8, color: "var(--muted)", marginTop: 4, lineHeight: 1.4 }}>
+          Used for backtest sizing and order staging
+        </div>
+      </div>
 
       {/* Tooltip rendering */}
       {hoveredStrategy && (() => {

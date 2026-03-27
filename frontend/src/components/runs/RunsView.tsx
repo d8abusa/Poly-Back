@@ -1,11 +1,11 @@
 import { useState } from "react";
-import type { HistoryRun, BatchBacktestResult } from "../../types";
+import type { HistoryRun } from "../../types";
 import RunCard from "../shared/RunCard";
 import BacktestResults from "../backtest/BacktestResults";
 
 interface RunsViewProps {
   historyRuns: HistoryRun[];
-  onLoadRun: (batch: BatchBacktestResult) => void;
+  onLoadRun: (run: HistoryRun) => void;
   onDeleteRun: (runId: string) => void;
 }
 
@@ -95,7 +95,7 @@ export default function RunsView({ historyRuns, onLoadRun, onDeleteRun }: RunsVi
               >
                 <RunCard
                   run={run}
-                  onLoad={r => { onLoadRun(r.batch); }}
+                  onLoad={r => { onLoadRun(r); }}
                   onDelete={handleDelete}
                 />
               </div>
@@ -126,7 +126,7 @@ export default function RunsView({ historyRuns, onLoadRun, onDeleteRun }: RunsVi
                 </div>
               </div>
               <button
-                onClick={() => onLoadRun(selectedRun.batch)}
+                onClick={() => onLoadRun(selectedRun)}
                 title="Load these results into the Backtest tab"
                 style={{
                   padding: "5px 12px", borderRadius: 5, cursor: "pointer",
@@ -141,7 +141,15 @@ export default function RunsView({ historyRuns, onLoadRun, onDeleteRun }: RunsVi
 
             {/* Results */}
             <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              <BacktestResults results={selectedRun.batch} />
+              <BacktestResults
+                results={selectedRun.batch}
+                capital={0}
+                executionMode="alert_only"
+                exchange="polymarket"
+                strategy={selectedRun.strategy}
+                queuedMarkets={[]}
+                onStaged={() => {}}
+              />
             </div>
           </>
         ) : (

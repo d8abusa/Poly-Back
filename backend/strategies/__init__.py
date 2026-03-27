@@ -383,6 +383,51 @@ ALL_STRATEGIES = [
         "synthetic_curve": _curve(77, trend=-0.003, noise=0.035),
     },
     {
+        "id":         "swing_reversion",
+        "name":       "Swing Reversion",
+        "tagline":    "Buy SMA dips, take the 5% bounce",
+        "category":   "Mean Reversion",
+        "risk":       "Medium",
+        "complexity": "Intermediate",
+        "color":      "#06b6d4",
+        "status":     "live",
+        "params": [
+            {"name": "window",          "label": "SMA Window",    "default": 10,   "min": 5,    "max": 50,   "step": 1,    "desc": "Short-term SMA lookback (candles). Shorter = more responsive to oscillations."},
+            {"name": "entry_threshold", "label": "Dip Entry %",   "default": 0.03, "min": 0.01, "max": 0.15, "step": 0.005,"desc": "Enter long when price is this % below the SMA (e.g. 0.03 = 3% dip)."},
+            {"name": "exit_threshold",  "label": "Profit Target %","default": 0.05, "min": 0.01, "max": 0.20, "step": 0.005,"desc": "Exit when price recovers this % above entry (e.g. 0.05 = 5% gain)."},
+            {"name": "stop_loss",       "label": "Hard Stop %",   "default": 0.02, "min": 0.01, "max": 0.15, "step": 0.005,"desc": "Exit immediately if price falls this % below entry. Prevents trend-riding losses."},
+        ],
+        "formula": "SMA_w = mean(p_{t-w..t});  dip = (SMA_w - p_t) / SMA_w;  dip ≥ entry% → Buy;  gain ≥ target% → Sell;  loss ≥ stop% → Sell forced",
+        "description": (
+            "Designed for stocks with regular short-term oscillations around a declining or flat trend. "
+            "Where Threshold anchors to a rolling high (which drifts away on bearish stocks), "
+            "Swing Reversion anchors to a short-window SMA — so entries remain valid throughout the trend.\n\n"
+            "Enter long when price dips below the SMA by the entry threshold (signalling a temporary oversold condition), "
+            "then exit when the price recovers the target percentage above your entry. "
+            "A hard stop prevents getting trapped if the dip continues into a larger leg down.\n\n"
+            "Best suited for stocks with identifiable ~3–7% oscillation ranges: consumer staples, large-cap cyclicals, "
+            "beaten-down blue chips. Not effective on parabolic trends or low-volatility assets."
+        ),
+        "logic": {
+            "entry": "price < SMA(window) × (1 - entry_threshold)  →  Buy",
+            "exit":  "price ≥ entry × (1 + exit_threshold)  →  Sell  |  price ≤ entry × (1 - stop_loss)  →  Sell forced",
+            "size":  "full available capital",
+        },
+        "edge": (
+            "Bearish trending stocks still oscillate — the trend sets direction but short-term mean reversion "
+            "creates tradable bounces. SMA anchoring captures these bounces without being fooled by the "
+            "ever-lower rolling-high that makes Threshold progressively blind on downtrending names."
+        ),
+        "risks": [
+            "Gap-down opens can breach the stop loss before the order fires",
+            "Works poorly in strong directional moves with no reversion (e.g. earnings crash)",
+            "Short SMA windows produce more entries but also more false signals",
+            "Not designed for intraday — calibrated for daily candles",
+        ],
+        "performance": {"win_rate": 0, "avg_return": 0, "sharpe": 0, "max_dd": 0, "trades": 0},
+        "synthetic_curve": _curve(60, trend=0.001, noise=0.025),
+    },
+    {
         "id":         "wizard",
         "name":       "Wizard",
         "tagline":    "Run all strategies — let the best one win",

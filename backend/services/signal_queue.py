@@ -52,16 +52,17 @@ def _upsert(sig: SignalSchema) -> None:
             INSERT INTO signals
                 (id, status, market_id, market_title, strategy, side, entry_price,
                  target_price, stop_loss, suggested_size, suggested_shares,
-                 execution_mode, created_at, resolved_at, payload)
+                 execution_mode, created_at, resolved_at, asset_type, payload)
             VALUES
                 (%(id)s, %(status)s, %(market_id)s, %(market_title)s, %(strategy)s,
                  %(side)s, %(entry_price)s, %(target_price)s, %(stop_loss)s,
                  %(suggested_size)s, %(suggested_shares)s, %(execution_mode)s,
-                 %(created_at)s, %(resolved_at)s, %(payload)s)
+                 %(created_at)s, %(resolved_at)s, %(asset_type)s, %(payload)s)
             ON CONFLICT (id) DO UPDATE SET
                 status=EXCLUDED.status,
                 resolved_at=EXCLUDED.resolved_at,
                 suggested_size=EXCLUDED.suggested_size,
+                asset_type=EXCLUDED.asset_type,
                 payload=EXCLUDED.payload
         """, row)
 

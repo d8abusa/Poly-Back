@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { Market } from "../../types";
+import { apiFetch } from "../../lib/apiFetch";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -186,7 +187,7 @@ export default function LiveFeed({ markets, exchange }: LiveFeedProps) {
   // Fetch active markets independently for the feed (not applicable for Yahoo)
   useEffect(() => {
     if (exchange === "yahoo") { setActiveMarkets([]); return; }
-    fetch(`/api/markets?limit=100&order=volumeNum&active=true&closed=false&exchange=${exchange}`)
+    apiFetch(`/api/markets?limit=100&order=volumeNum&active=true&closed=false&exchange=${exchange}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => d?.markets && setActiveMarkets(d.markets))
       .catch(() => {});
@@ -209,7 +210,7 @@ export default function LiveFeed({ markets, exchange }: LiveFeedProps) {
       const tid = market.token_id ?? market.id;
       const cid = market.condition_id ?? market.id;
       const url = `/api/feed/snapshot?market_id=${encodeURIComponent(mid)}&token_id=${encodeURIComponent(tid)}&condition_id=${encodeURIComponent(cid)}&exchange=${exchange}`;
-      const r = await fetch(url);
+      const r = await apiFetch(url);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setSnapshot(await r.json());
       setLastPollAt(new Date());

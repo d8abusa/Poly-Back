@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { apiFetch } from "../../lib/apiFetch";
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine
@@ -72,7 +73,7 @@ export default function HistoryView() {
 
   // Fetch real closed positions from the API
   useEffect(() => {
-    fetch("/api/positions/closed")
+    apiFetch("/api/positions/closed")
       .then(r => r.ok ? r.json() : [])
       .then((data: ClosedPosition[]) => setHistory(Array.isArray(data) ? data : []))
       .catch(() => setHistory([]));

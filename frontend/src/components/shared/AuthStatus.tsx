@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { apiFetch } from "../../lib/apiFetch";
 
 interface AuthInfo {
   auth_level:      "full" | "api" | "public";
@@ -23,7 +24,7 @@ export default function AuthStatus() {
   const [open, setOpen]   = useState(false);
 
   useEffect(() => {
-    fetch("/api/feed/auth/status")
+    apiFetch("/api/feed/auth/status")
       .then(r => r.ok ? r.json() : null)
       .then(d => d && setAuth(d))
       .catch(() => {});

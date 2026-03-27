@@ -1,3 +1,4 @@
+import { apiFetch } from "../lib/apiFetch";
 /**
  * Watchlist API client for communicating with the backend watchlist endpoints
  */
@@ -31,7 +32,7 @@ interface Alert {
 // ── Watchlist API ──────────────────────────────────────────────────
 
 export async function getWatchlist(): Promise<WatchlistItem[]> {
-  const response = await fetch('/api/watchlist');
+  const response = await apiFetch('/api/watchlist');
   if (!response.ok) {
     throw new Error(`Failed to fetch watchlist: ${response.statusText}`);
   }
@@ -43,7 +44,7 @@ export async function addWatchlistItem(params: {
   market_title: string;
   category?: string;
 }): Promise<WatchlistItem> {
-  const response = await fetch('/api/watchlist', {
+  const response = await apiFetch('/api/watchlist', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -55,7 +56,7 @@ export async function addWatchlistItem(params: {
 }
 
 export async function removeWatchlistItem(item_id: string): Promise<void> {
-  const response = await fetch(`/api/watchlist/item/${item_id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/watchlist/item/${item_id}`, { method: 'DELETE' });
   if (!response.ok) {
     throw new Error(`Failed to remove watchlist item: ${response.statusText}`);
   }
@@ -64,7 +65,7 @@ export async function removeWatchlistItem(item_id: string): Promise<void> {
 // ── Alerts API ────────────────────────
 
 export async function getAlerts(): Promise<Alert[]> {
-  const response = await fetch('/api/watchlist/alerts');
+  const response = await apiFetch('/api/watchlist/alerts');
   if (!response.ok) {
     throw new Error(`Failed to fetch alerts: ${response.statusText}`);
   }
@@ -72,7 +73,7 @@ export async function getAlerts(): Promise<Alert[]> {
 }
 
 export async function getUnreadAlerts(): Promise<Alert[]> {
-  const response = await fetch('/api/watchlist/alerts/unread');
+  const response = await apiFetch('/api/watchlist/alerts/unread');
   if (!response.ok) {
     throw new Error(`Failed to fetch unread alerts: ${response.statusText}`);
   }
@@ -83,7 +84,7 @@ export async function createAlert(params: {
   market_id: string;
   trigger: AlertTrigger;
 }): Promise<Alert> {
-  const response = await fetch('/api/watchlist/alert', {
+  const response = await apiFetch('/api/watchlist/alert', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -95,14 +96,14 @@ export async function createAlert(params: {
 }
 
 export async function dismissAlert(alert_id: string): Promise<void> {
-  const response = await fetch(`/api/watchlist/alert/${alert_id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/watchlist/alert/${alert_id}`, { method: 'DELETE' });
   if (!response.ok) {
     throw new Error(`Failed to dismiss alert: ${response.statusText}`);
   }
 }
 
 export async function markAlertRead(alert_id: string): Promise<void> {
-  const response = await fetch(`/api/watchlist/alert/${alert_id}/read`, {
+  const response = await apiFetch(`/api/watchlist/alert/${alert_id}/read`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
@@ -114,7 +115,7 @@ export async function markAlertRead(alert_id: string): Promise<void> {
 // ── Alert Trigger Check (internal use) ──────────────────
 
 export async function checkTriggers(market_id: string, price: number): Promise<Alert[]> {
-  const response = await fetch(`/api/watchlist/check_triggers`, {
+  const response = await apiFetch(`/api/watchlist/check_triggers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ market_id, price }),

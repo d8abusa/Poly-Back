@@ -103,6 +103,29 @@ class BacktestRequest(BaseModel):
     kelly_min_roi:        float          = Field(0.0,  ge=0.0,  le=0.50,
                           description="Min expected ROI (exit/entry - 1) before Kelly fires")
 
+    # Wizard regime testing — split history into N equal time windows and rank strategies
+    # by cross-window consistency.  1 = full history (default / classic Wizard behaviour).
+    wizard_windows: int = Field(1, ge=1, le=4,
+                        description="Split history into N windows; Wizard ranks by cross-window consistency")
+
+    # Wizard strategy selection — which strategies to include in the Wizard run.
+    # Empty list = use the full default set (all long strategies).
+    wizard_strategies: List[str] = Field(default_factory=list,
+                        description="Strategy IDs to include in Wizard; empty = all defaults")
+
+    # Slippage — applied to every fill to model execution cost.
+    # Stocks: ~5 bps (tight spreads, zero-commission brokers).
+    # Crypto: ~10–15 bps (Coinbase Advanced Trade taker fee + spread).
+    # Prediction markets: ~2–5 bps.
+    slippage_bps: float = Field(5.0, ge=0.0, le=100.0,
+                        description="One-way slippage in basis points applied to each fill (buy costs more, sell nets less)")
+
+    # Mean Reversion
+    lookback_window:     int   = Field(15,  ge=5,   le=60,
+                            description="Rolling window length for mean/std calculation")
+    reversion_threshold: float = Field(2.0, ge=0.5, le=4.0,
+                            description="Standard deviations from mean to trigger entry")
+
     # Market Making
     mm_spread: float = Field(0.04, ge=0.0001, le=0.20)  # 0.01% min to allow tight-MM testing
 
@@ -136,6 +159,12 @@ class BacktestRequest(BaseModel):
                             description="Scale down kelly_fraction by this factor (from MacroContext)")
     macro_features:     List[float] = Field(default_factory=list,
                             description="Normalised FRED feature vector appended to XGBoost features")
+    macro_recession_risk: str = Field("unknown",
+                            description="Regime label: low|medium|high|unknown")
+    macro_fed_stance:     str = Field("unknown",
+                            description="Regime label: easing|neutral|tightening|unknown")
+    macro_inflation:      str = Field("unknown",
+                            description="Regime label: below_target|at_target|above_target|unknown")
 
 
 class BatchMarketInput(BaseModel):
@@ -175,6 +204,28 @@ class SignalSchema(BaseModel):
     status:          SignalStatus  = SignalStatus.pending
     created_at:      str  = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     resolved_at:     Optional[str] = None
+    exchange:        str  = "polymarket"   # originating exchange
+    asset_type:      str  = "prediction_market"  # stock | crypto | prediction_market
+
+
+class StageFromBacktestRequest(BaseModel):
+    market_id:      str
+    market_title:   str
+    strategy:       str
+    exchange:       str                          # yahoo | coinbase | polymarket | kalshi
+    capital:        float = Field(gt=0)          # USD to deploy
+    execution_mode: ExecutionMode = ExecutionMode.confirm
+    # Core backtest metrics
+    total_return:   float
+    sharpe_ratio:   float
+    max_drawdown:   float
+    win_rate:       float
+    total_trades:   int
+    # Last price from equity_curve (proxy for current price)
+    last_price:     float = Field(gt=0)
+    # Strategy exit / stop params (passed through from the run)
+    exit_threshold: Optional[float] = None
+    stop_loss:      Optional[float] = None
 
 
 class SignalApproveRequest(BaseModel):
@@ -186,6 +237,18 @@ class SignalModifyRequest(BaseModel):
     price: Optional[float] = None
 
 
+class AccountTier(str, Enum):
+    standard    = "standard"     # 3-day min hold  (typical cash/brokerage account)
+    margin      = "margin"       # 2-day min hold  (margin account — more flexibility)
+    day_trading = "day_trading"  # 1-day min hold  (PDT-flagged / day-trading account)
+
+# Cooldown days enforced per tier for stock exchange backtests
+TIER_MIN_HOLD: dict[str, int] = {
+    "standard":    3,
+    "margin":      2,
+    "day_trading": 1,
+}
+
 class BatchBacktestRequest(BaseModel):
     markets: List[BatchMarketInput]
     strategy: str = "threshold"
@@ -195,6 +258,7 @@ class BatchBacktestRequest(BaseModel):
     initial_capital: float = 1000.0
     interval: str = "max"
     execution_mode: ExecutionMode = ExecutionMode.confirm
+    account_tier: AccountTier = AccountTier.standard
     date_from: Optional[str] = None
     date_to:   Optional[str] = None
     # Z-Score / Mean Reversion
@@ -206,6 +270,17 @@ class BatchBacktestRequest(BaseModel):
     kelly_fraction:      float          = 0.5
     kelly_dip_threshold: Optional[float] = None
     kelly_min_roi:       float          = 0.0
+    # Wizard regime windows
+    wizard_windows: int = 1
+    wizard_strategies: List[str] = Field(default_factory=list)
+
+    # Slippage
+    slippage_bps: float = 5.0
+
+    # Mean Reversion
+    lookback_window:     int   = 15
+    reversion_threshold: float = 2.0
+
     # Market Making
     mm_spread: float = 0.04
     # Momentum
@@ -236,6 +311,9 @@ class BacktestResult(BaseModel):
     trades: List[Any]
     # Wizard meta — populated only when strategy == "wizard"
     wizard_rankings: Optional[List[Dict[str, Any]]] = None
+    # Regime split results — populated when wizard_windows > 1
+    # Each entry is one time window with its own per-strategy rankings.
+    regime_splits:   Optional[List[Dict[str, Any]]] = None
 
 
 class BatchBacktestResult(BaseModel):

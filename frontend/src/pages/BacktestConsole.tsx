@@ -18,6 +18,8 @@ import AuthStatus from "../components/shared/AuthStatus";
 import StrategyDetailPanel from "../components/shared/StrategyDetailPanel";
 import SettingsPanel from "../components/shared/SettingsPanel";
 import Watchlist from "../components/watchlist/Watchlist";
+import MacroPanel from "../components/macro/MacroPanel";
+import { apiFetch, clearToken } from "../lib/apiFetch";
 
 // ── BacktestConsole — owns ALL shared state ────────────────────────────────────
 
@@ -46,13 +48,19 @@ export default function BacktestConsole() {
 
   // ── Exchange ──────────────────────────────────────────────────────────────────
   const [exchange, setExchange] = useState<ExchangeId>("kalshi");
+  const [refreshTick, setRefreshTick] = useState(0);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo,   setDateTo]   = useState("");
+
+  // ── Account tier (stocks only) ────────────────────────────────────────────────
+  type AccountTier = "standard" | "margin" | "day_trading";
+  const [accountTier, setAccountTier] = useState<AccountTier>("standard");
   const [showSettings,    setShowSettings]    = useState(false);
 
-  // ── Execution mode + view ─────────────────────────────────────────────────────
+  // ── Capital + execution mode + view ──────────────────────────────────────────
+  const [capital, setCapital] = useState<number>(0);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("confirm");
-  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed" | "runs" | "watchlist">("backtest");
+  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed" | "runs" | "watchlist" | "macro">("backtest");
 
   // ── Toast ────────────────────────────────────────────────────────────────────
   const [toastMsg, setToastMsg] = useState("");
@@ -79,13 +87,14 @@ export default function BacktestConsole() {
 
   // ── Load persisted run history on mount ──────────────────────────────────────
   useEffect(() => {
-    fetch("/api/backtest/history?limit=50")
+    apiFetch("/api/backtest/history?limit=50")
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(data => {
         const runs: HistoryRun[] = (data.runs ?? []).map((r: any) => ({
           id:           r.id,
           runAt:        r.run_at,
           strategy:     r.strategy,
+          exchange:     r.exchange ?? "kalshi",
           marketTitles: Array.isArray(r.market_titles) ? r.market_titles : [],
           batch:        r.payload,
         }));
@@ -103,7 +112,7 @@ export default function BacktestConsole() {
     if (liveSearchTimer.current) clearTimeout(liveSearchTimer.current);
     liveSearchTimer.current = setTimeout(() => {
       setLoading(true);
-      fetch(`/api/markets?limit=20&exchange=${exchange}&q=${encodeURIComponent(q)}`)
+      apiFetch(`/api/markets?limit=20&exchange=${exchange}&q=${encodeURIComponent(q)}`)
         .then(r => r.ok ? r.json() : Promise.reject(r.status))
         .then(data => {
           const list: Market[] = data.markets ?? [];
@@ -124,7 +133,7 @@ export default function BacktestConsole() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(`/api/markets?limit=100&order=volume&exchange=${exchange}`)
+    apiFetch(`/api/markets?limit=100&order=volume&exchange=${exchange}`)
       .then(r => {
         if (!r.ok) throw new Error(`API error ${r.status}`);
         return r.json();
@@ -142,7 +151,7 @@ export default function BacktestConsole() {
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, [exchange]);
+  }, [exchange, refreshTick]);
 
   // ── Fetch price history when selected market changes ─────────────────────────
   useEffect(() => {
@@ -158,7 +167,7 @@ export default function BacktestConsole() {
     setHistoryLoading(true);
     setPriceHistory(null);
     const tid = selectedMarket.token_id ?? selectedMarket.id;
-    fetch(
+    apiFetch(
       `/api/markets/${selectedMarket.id}/history` +
       `?token_id=${encodeURIComponent(tid)}&interval=max&exchange=${exchange}`
     )
@@ -211,7 +220,7 @@ export default function BacktestConsole() {
     showToast(`▶ Running ${activeStrategy} on ${runnable.length} market${runnable.length > 1 ? "s" : ""}…`);
 
     try {
-      const resp = await fetch(`/api/backtest/batch?exchange=${exchange}`, {
+      const resp = await apiFetch(`/api/backtest/batch?exchange=${exchange}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -221,15 +230,19 @@ export default function BacktestConsole() {
           })),
           strategy: activeStrategy,
           ...strategyParams,
-          initial_capital: 1000,
+          initial_capital: capital,
           interval: "max",
           execution_mode: executionMode,
+          account_tier: exchange === "yahoo" ? accountTier : "standard",
           ...(dateFrom ? { date_from: dateFrom } : {}),
           ...(dateTo   ? { date_to:   dateTo   } : {}),
         }),
       });
 
-      if (!resp.ok) throw new Error(`API ${resp.status}`);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail ?? `API ${resp.status}`);
+      }
       const batch: BatchBacktestResult = await resp.json();
 
       setBacktestResults(batch);
@@ -239,6 +252,7 @@ export default function BacktestConsole() {
         id: `${Date.now()}`,
         runAt: new Date().toISOString(),
         strategy: activeStrategy,
+        exchange,
         marketTitles: runnable.map(m => m.title),
         batch,
       };
@@ -251,8 +265,9 @@ export default function BacktestConsole() {
       } else {
         showToast("⚠ Backtest returned no successful results");
       }
-    } catch {
-      showToast("⚠ Backtest failed — is the backend running?");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "unknown error";
+      showToast(`⚠ ${msg}`);
     } finally {
       setRunning(false);
     }
@@ -276,8 +291,10 @@ export default function BacktestConsole() {
     return () => clearTimeout(timer);
   }, [autoRunKey]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleLoadRun = (batch: BatchBacktestResult) => {
-    setBacktestResults(batch);
+  const handleLoadRun = (run: HistoryRun) => {
+    setBacktestResults(run.batch);
+    setExchange(run.exchange ?? "kalshi");
+    setActiveStrategy(run.strategy);
   };
 
   const handleDeleteRun = (runId: string) => {
@@ -325,6 +342,43 @@ export default function BacktestConsole() {
             })}
           </div>
 
+          {/* Account tier selector — stocks only */}
+          {exchange === "yahoo" && (() => {
+            const tiers: { id: AccountTier; label: string; desc: string }[] = [
+              { id: "standard",    label: "Standard",    desc: "3-day min hold (cash account)" },
+              { id: "margin",      label: "Margin",      desc: "2-day min hold (margin account)" },
+              { id: "day_trading", label: "Day Trading", desc: "No hold restriction (PDT account)" },
+            ];
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 12 }}>
+                <span style={{ fontSize: 9, color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace", textTransform: "uppercase", letterSpacing: 1 }}>
+                  Account
+                </span>
+                {tiers.map(t => {
+                  const active = accountTier === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      title={t.desc}
+                      onClick={() => setAccountTier(t.id)}
+                      style={{
+                        padding: "3px 8px", borderRadius: 4, cursor: "pointer",
+                        fontFamily: "IBM Plex Mono, monospace", fontSize: 9,
+                        border: `1px solid ${active ? "rgba(34,197,94,0.4)" : "var(--border2)"}`,
+                        background: active ? "rgba(34,197,94,0.1)" : "var(--surface2)",
+                        color: active ? "#22c55e" : "var(--muted2)",
+                        fontWeight: active ? 700 : 400,
+                        transition: "all 0.12s",
+                      }}
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           <div className="header-right">
             {loading
               ? <span style={{ color: "var(--accent)", fontSize: 10 }}>Loading markets…</span>
@@ -333,13 +387,21 @@ export default function BacktestConsole() {
                 : <span style={{ color: "var(--muted)" }}>{markets.length} markets indexed</span>
             }
             {queuedMarkets.length > 0 && (
-              <span className="sel-count">⚡ {queuedMarkets.length} queued</span>
+              <span
+                className="sel-count"
+                onClick={() => setView("backtest")}
+                title="Click to go to backtest queue"
+                style={{ cursor: "pointer" }}
+              >
+                ⚡ {queuedMarkets.length} queued
+              </span>
             )}
             {/* View nav */}
-            {(["backtest", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist"] as const).map(v => {
+            {(["backtest", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist", "macro"] as const).map(v => {
               const labels: Record<string, string> = {
                 backtest: "Backtest", signals: "Signals", positions: "Positions",
                 history: "Trade History", strategies: "Strategies", feed: "Feed", runs: "Runs", watchlist: "Watchlist",
+                macro: "Macro",
               };
               const active = view === v;
               return (
@@ -370,6 +432,20 @@ export default function BacktestConsole() {
               );
             })}
             <AuthStatus />
+            {/* Logout */}
+            <button
+              onClick={() => { clearToken(); window.dispatchEvent(new Event("polyback:logout")); }}
+              title="Sign out"
+              style={{
+                padding: "4px 9px", borderRadius: 5, cursor: "pointer",
+                border: "1px solid var(--border2)", background: "var(--surface2)",
+                color: "var(--muted2)", fontSize: 11, lineHeight: 1,
+                fontFamily: "IBM Plex Mono, monospace",
+                transition: "all 0.12s",
+              }}
+            >
+              ⏻
+            </button>
             {/* Settings gear */}
             <button
               onClick={() => setShowSettings(true)}
@@ -402,6 +478,7 @@ export default function BacktestConsole() {
               onToggleQueue={handleToggleQueue}
               liveSearch={exchange === "yahoo"}
               onLiveSearch={handleLiveSearch}
+              onRefresh={exchange === "yahoo" ? () => setRefreshTick(t => t + 1) : undefined}
             />
 
             {/* Right: detail + backtest */}
@@ -433,6 +510,8 @@ export default function BacktestConsole() {
                 executionMode={executionMode}
                 onExecutionModeChange={setExecutionMode}
                 exchange={exchange}
+                capital={capital}
+                onCapitalChange={setCapital}
                 dateFrom={dateFrom}
                 dateTo={dateTo}
                 onDateFromChange={setDateFrom}
@@ -452,7 +531,15 @@ export default function BacktestConsole() {
                     <div style={{ width: 32, height: 2, borderRadius: 1, background: "var(--muted)" }} />
                   </div>
                   <div style={{ height: resultsHeight, minHeight: 120, overflow: "hidden", flexShrink: 0, display: "flex", flexDirection: "column" }}>
-                    <BacktestResults results={backtestResults} />
+                    <BacktestResults
+                      results={backtestResults}
+                      capital={capital}
+                      executionMode={executionMode}
+                      exchange={exchange}
+                      strategy={activeStrategy}
+                      queuedMarkets={queuedMarkets}
+                      onStaged={() => { showToast("Signal staged → check Signals tab"); setView("signals"); }}
+                    />
                   </div>
                 </>
               )}
@@ -485,11 +572,15 @@ export default function BacktestConsole() {
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
             <Watchlist />
           </div>
+        ) : view === "macro" ? (
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <MacroPanel />
+          </div>
         ) : (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
             <RunsView
               historyRuns={historyRuns}
-              onLoadRun={batch => { handleLoadRun(batch); setView("backtest"); }}
+              onLoadRun={run => { handleLoadRun(run); setView("backtest"); }}
               onDeleteRun={handleDeleteRun}
             />
           </div>

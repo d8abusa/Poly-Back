@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { apiFetch } from "../../lib/apiFetch";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -331,7 +332,7 @@ export default function StrategyDetailPanel({ onUseStrategy }: StrategyDetailPan
 
   // Fetch strategy list
   useEffect(() => {
-    fetch("/api/strategies")
+    apiFetch("/api/strategies")
       .then(r => r.json())
       .then(data => {
         const list: Strategy[] = data.strategies;

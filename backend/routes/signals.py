@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Body
 
-from ..models.schemas import SignalApproveRequest, SignalModifyRequest
+from ..models.schemas import SignalApproveRequest, SignalModifyRequest, SignalSchema, StageFromBacktestRequest, ExecutionMode
 from ..services import signal_queue as sq
 from ..services import alert_service as alerts
 from ..services import position_tracker as pt
@@ -25,6 +25,81 @@ def _infer_exchange(market_id: str) -> str:
     if _is_coinbase_signal(market_id):
         return "coinbase"
     return "kalshi"  # default for prediction markets
+
+
+def _asset_type(exchange: str) -> str:
+    if exchange == "yahoo":
+        return "stock"
+    if exchange == "coinbase":
+        return "crypto"
+    return "prediction_market"
+
+
+def _derive_target(req: StageFromBacktestRequest) -> float:
+    """Estimate a forward price target from the backtest params."""
+    if req.exit_threshold is not None:
+        if req.exchange == "yahoo":
+            # exit_threshold is a % gain (e.g. 0.10 = 10% above entry)
+            return round(req.last_price * (1.0 + req.exit_threshold), 4)
+        # prediction market: exit_threshold is the target probability
+        return req.exit_threshold
+    # Fallback: project the average per-trade return
+    avg_trade = req.total_return / max(req.total_trades, 1) / 100.0
+    return round(req.last_price * (1.0 + avg_trade), 4)
+
+
+def _derive_confidence(win_rate: float, sharpe: float) -> float:
+    """Blend win-rate and Sharpe into a 0–1 confidence score."""
+    sharpe_norm = min(sharpe / 3.0, 1.0)          # 3.0 Sharpe → full marks
+    raw = win_rate * 0.6 + sharpe_norm * 0.4
+    return round(min(max(raw, 0.05), 0.95), 3)
+
+
+@router.post("/from-backtest", response_model=dict)
+async def stage_from_backtest(req: StageFromBacktestRequest):
+    """Create a signal directly from a completed backtest result."""
+    entry   = req.last_price
+    target  = _derive_target(req)
+    shares  = req.capital / entry
+    edge    = (target - entry) / entry          # expected % gain
+    conf    = _derive_confidence(req.win_rate, req.sharpe_ratio)
+
+    reasoning = (
+        f"Staged from {req.strategy} backtest on {req.market_title}. "
+        f"Return {req.total_return:+.1f}% · Sharpe {req.sharpe_ratio:.2f} · "
+        f"Win rate {req.win_rate*100:.0f}% over {req.total_trades} trades. "
+        f"Capital ${req.capital:,.0f} → {shares:.4f} units @ {entry:.4f}."
+    )
+
+    sig = SignalSchema(
+        market_id       = req.market_id,
+        strategy        = req.strategy,
+        side            = "BUY",
+        entry_price     = round(entry, 4),
+        target_price    = target,
+        stop_loss       = req.stop_loss,
+        suggested_size  = int(req.capital),
+        suggested_shares= round(shares, 6),
+        expected_edge   = round(edge, 4),
+        maker_edge      = 0.0,
+        delta_taker     = 0.0,
+        confidence      = conf,
+        reasoning       = reasoning,
+        execution_mode  = req.execution_mode,
+        exchange        = req.exchange,
+        asset_type      = _asset_type(req.exchange),
+    )
+
+    # Auto mode: mark as auto_executed immediately (no human review step)
+    if req.execution_mode == ExecutionMode.auto:
+        sig.status = "auto_executed"
+
+    added = sq.add_signal(sig)
+    log.info(
+        "Staged signal from backtest: %s %s %.4f  size=$%d  mode=%s",
+        req.strategy, req.market_id, entry, int(req.capital), req.execution_mode,
+    )
+    return {"status": "staged", "signal": added}
 
 
 @router.get("")

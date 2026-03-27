@@ -4,6 +4,7 @@ Watchlist and alerts service.
 Manages watchlist items and alerts, checks for trigger conditions.
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -32,9 +33,12 @@ def _load_from_db() -> None:
         _watchlist = [WatchlistItem(**row) for row in rows]
 
     with get_cursor() as cur:
-        # Load alerts
+        # Load alerts — trigger column stored as JSON text
         cur.execute("SELECT * FROM alerts ORDER BY created_at")
         rows = row_to_list(cur.fetchall())
+        for row in rows:
+            if isinstance(row.get("trigger"), str):
+                row["trigger"] = json.loads(row["trigger"])
         _alerts = [Alert(**row) for row in rows]
 
     _loaded = True
@@ -61,6 +65,9 @@ def _save_alerts() -> None:
     """Persist current alerts to database."""
     with get_cursor() as cur:
         for alert in _alerts:
+            row = alert.model_dump(mode="json", exclude_none=True)
+            # Serialize trigger sub-model to JSON text for TEXT column
+            row["trigger"] = json.dumps(row["trigger"])
             cur.execute("""
                 INSERT INTO alerts
                     (id, watchlist_item_id, market_id, market_title, trigger,
@@ -73,7 +80,7 @@ def _save_alerts() -> None:
                     read=EXCLUDED.read,
                     dismissed_at=EXCLUDED.dismissed_at,
                     triggered_at=EXCLUDED.triggered_at
-            """, alert.model_dump(mode="json", exclude_none=True))
+            """, row)
 
 
 # ── Watchlist API ────────────────────────────────────────────────────────
@@ -216,35 +223,3 @@ def get_unread_alerts() -> list[Alert]:
     return [alert for alert in _alerts if not alert.read]
 
 
-# ── Database Setup ────────────────────────────────────────────────────────
-
-def create_tables() -> None:
-    """Create watchlist and alerts tables if they don't exist."""
-    with get_cursor() as cur:
-        # Watchlist table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS watchlist (
-                id TEXT PRIMARY KEY,
-                market_id TEXT UNIQUE NOT NULL,
-                market_title TEXT NOT NULL,
-                category TEXT NOT NULL DEFAULT 'Other',
-                added_at TIMESTAMP NOT NULL
-            )
-        """)
-
-        # Alerts table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS alerts (
-                id TEXT PRIMARY KEY,
-                watchlist_item_id TEXT REFERENCES watchlist(id) ON DELETE CASCADE,
-                market_id TEXT NOT NULL,
-                market_title TEXT NOT NULL,
-                trigger TEXT NOT NULL,
-                triggered_at TIMESTAMP,
-                dismissed_at TIMESTAMP,
-                read BOOLEAN NOT NULL DEFAULT FALSE,
-                created_at TIMESTAMP NOT NULL
-            )
-        """)
-
-# Table is created on first DB init

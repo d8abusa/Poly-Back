@@ -5,6 +5,7 @@ interface ExecutionModeToggleProps {
   mode: ExecutionMode;
   onChange: (mode: ExecutionMode) => void;
   scope?: "global" | "signal";
+  exchange?: string;
 }
 
 const MODES: { id: ExecutionMode; label: string; color: string; desc: string }[] = [
@@ -13,10 +14,19 @@ const MODES: { id: ExecutionMode; label: string; color: string; desc: string }[]
   { id: "alert_only", label: "ALERT ONLY", color: "#7b61ff", desc: "Log signals only — no orders placed" },
 ];
 
+const EXCHANGE_LABEL: Record<string, string> = {
+  coinbase:    "Coinbase Advanced Trade",
+  yahoo:       "paper — Yahoo data has no live order routing",
+  polymarket:  "Polymarket CLOB",
+  kalshi:      "Kalshi",
+  manifold:    "Manifold (play money)",
+};
+
 export default function ExecutionModeToggle({
   mode,
   onChange,
   scope = "global",
+  exchange = "polymarket",
 }: ExecutionModeToggleProps) {
   const [pendingAuto, setPendingAuto] = useState(false);
 
@@ -87,7 +97,7 @@ export default function ExecutionModeToggle({
             ⚠ AUTO mode — trades execute without confirmation
           </div>
           <div style={{ fontSize: 9, color: "var(--muted2)", marginBottom: 10, lineHeight: 1.6 }}>
-            Orders will be submitted to the Polymarket CLOB immediately when a signal fires.
+            Orders will be submitted to <strong>{EXCHANGE_LABEL[exchange] ?? exchange}</strong> immediately when a signal fires.
             Ensure your position sizing and stop-loss parameters are correctly configured.
           </div>
           <div style={{ display: "flex", gap: 6 }}>

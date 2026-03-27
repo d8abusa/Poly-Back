@@ -87,7 +87,7 @@ class PredictionMarketBacktester:
         self._zscore_window: deque = deque(maxlen=request.zscore_window if hasattr(request, "zscore_window") else 20)
 
         # Mean Reversion: separate rolling window using its own lookback_window param
-        self._mr_window: deque = deque(maxlen=getattr(request, "lookback_window", 15))
+        self._mr_window: deque = deque(maxlen=request.lookback_window)
 
         # Kelly: tracks consecutive wins/losses for fractional sizing
         self._kelly_last_pnls: deque = deque(maxlen=20)
@@ -169,6 +169,8 @@ class PredictionMarketBacktester:
                 self._market_making(prob, date)
             elif self.req.strategy == "xgboost":
                 self._xgboost(prob, date)
+            elif self.req.strategy == "swing_reversion":
+                self._swing_reversion(prob, date)
             elif self.req.strategy == "short_momentum":
                 self._short_momentum(prob, date)
             elif self.req.strategy == "short_zscore":
@@ -192,6 +194,7 @@ class PredictionMarketBacktester:
 
         equity_series = pd.Series([pt["value"] for pt in self.equity_curve])
         daily_ret = equity_series.pct_change().dropna()
+        ann_factor = self._annualization_factor(history)
 
         return BacktestResult(
             success=True,
@@ -199,7 +202,7 @@ class PredictionMarketBacktester:
             initial_capital=self.req.initial_capital,
             final_value=round(self.cash, 4),
             total_return=round((self.cash - self.req.initial_capital) / self.req.initial_capital * 100, 2),
-            sharpe_ratio=round(self._sharpe(daily_ret), 3),
+            sharpe_ratio=round(self._sharpe(daily_ret, ann_factor=ann_factor), 3),
             max_drawdown=round(self._max_drawdown(equity_series) * 100, 2),
             total_trades=len(self.trades),
             win_rate=round(self._win_rate() * 100, 2),
@@ -219,8 +222,11 @@ class PredictionMarketBacktester:
             self._stock_ref_high = max(self._stock_ref_high, prob)
             if self.position == 0 and self.cash > 0 and not self._on_cooldown():
                 dip = (self._stock_ref_high - prob) / self._stock_ref_high
-                if dip >= self.req.entry_threshold:
-                    self._buy(prob, date, note=f"dip={dip*100:.1f}%")
+                macro_ok, size_mult = self._macro_stock_gate()
+                if dip >= self.req.entry_threshold and macro_ok:
+                    cost = self.cash * size_mult
+                    self._buy_partial(prob, date, shares=cost / prob, cost=cost,
+                                      note=f"dip={dip*100:.1f}% macro={size_mult:.0%}")
                     self._stock_ref_high = prob   # reset after entry
             elif self.position > 0:
                 gain = (prob - self.avg_entry) / self.avg_entry
@@ -277,8 +283,11 @@ class PredictionMarketBacktester:
             if self.position == 0 and self.cash > 0 and not self._on_cooldown():
                 # Breakout: price exceeds rolling high by at least momentum_min%
                 breakout_pct = (prob - rolling_high) / rolling_high * 100.0
-                if prob > rolling_high and breakout_pct >= momentum_min:
-                    self._buy(prob, date, note=f"breakout +{breakout_pct:.1f}%")
+                macro_ok, size_mult = self._macro_stock_gate()
+                if prob > rolling_high and breakout_pct >= momentum_min and macro_ok:
+                    cost = self.cash * size_mult
+                    self._buy_partial(prob, date, shares=cost / prob, cost=cost,
+                                      note=f"breakout +{breakout_pct:.1f}% macro={size_mult:.0%}")
                     self._stock_ref_high = prob   # begin tracking peak for trail
 
             elif self.position > 0:
@@ -392,7 +401,7 @@ class PredictionMarketBacktester:
             return
 
         deviation = (prob - mean) / std
-        threshold = getattr(self.req, "reversion_threshold", 2.0)
+        threshold = self.req.reversion_threshold
         stop      = self.req.stop_loss
 
         if self.position == 0 and self.cash > 0 and not self._on_cooldown():
@@ -719,50 +728,130 @@ class PredictionMarketBacktester:
         """
         Run every long strategy on the same (pre-filtered) history, rank by
         total_return, and return the winner's full result with all rankings attached.
+
+        When req.wizard_windows > 1 the history is split into N equal time windows.
+        Each window gets its own strategy ranking.  The overall ranking adds a
+        `wins` counter (how many windows each strategy topped) and a `consistency`
+        score (wins / windows) to guide regime-robust strategy selection.
         Sub-engines receive the already-filtered history with date params cleared
         to avoid double-filtering.
         """
-        STRATEGIES = [
+        ALL_STRATEGIES = [
             ("threshold",        "Threshold"),
             ("momentum",         "Momentum Chaser"),
             ("zscore_reversion", "Z-Score Reversion"),
             ("kelly",            "Kelly Criterion"),
             ("mean_reversion",   "Mean Reversion"),
             ("market_making",    "Market Making"),
+            ("swing_reversion",  "Swing Reversion"),
+            ("short_momentum",   "Short Momentum"),
+            ("short_zscore",     "Short Z-Score"),
         ]
 
-        rankings: list[dict] = []
-        results: dict[str, BacktestResult] = {}
+        _selected = getattr(self.req, "wizard_strategies", [])
+        STRATEGIES = (
+            [(sid, sname) for sid, sname in ALL_STRATEGIES if sid in _selected]
+            if _selected
+            else [(sid, sname) for sid, sname in ALL_STRATEGIES if not sid.startswith("short_")]
+        )
 
-        for strategy_id, strategy_name in STRATEGIES:
+        def _run_one_window(window_history: list) -> tuple[list[dict], dict[str, BacktestResult]]:
+            """Run all strategies on a single history slice. Returns (rankings, results)."""
+            ranks: list[dict] = []
+            res:   dict[str, BacktestResult] = {}
+            for sid, sname in STRATEGIES:
+                try:
+                    sub_req = self.req.model_copy(update={"strategy": sid, "date_from": None, "date_to": None})
+                    result  = PredictionMarketBacktester(sub_req, window_history).run()
+                    if result.success:
+                        ranks.append({
+                            "strategy":     sid,
+                            "name":         sname,
+                            "total_return": result.total_return,
+                            "sharpe_ratio": result.sharpe_ratio,
+                            "max_drawdown": result.max_drawdown,
+                            "win_rate":     result.win_rate,
+                            "total_trades": result.total_trades,
+                        })
+                        res[sid] = result
+                except Exception as exc:
+                    log.warning("wizard: %s failed — %s", sid, exc)
+            ranks.sort(key=lambda x: (x["total_return"], x["sharpe_ratio"]), reverse=True)
+            return ranks, res
+
+        n_windows = max(1, getattr(self.req, "wizard_windows", 1))
+
+        if n_windows == 1 or len(history) < n_windows * 10:
+            # Classic single-window mode
+            rankings, results = _run_one_window(history)
+            if not rankings:
+                return self._error("Wizard: all strategies failed on this history.")
+            rankings.sort(key=lambda x: (x["total_return"], x["sharpe_ratio"]), reverse=True)
+            winner = results[rankings[0]["strategy"]]
+            return BacktestResult(
+                success=True,
+                condition_id=self.req.condition_id,
+                initial_capital=self.req.initial_capital,
+                final_value=winner.final_value,
+                total_return=winner.total_return,
+                sharpe_ratio=winner.sharpe_ratio,
+                max_drawdown=winner.max_drawdown,
+                total_trades=winner.total_trades,
+                win_rate=winner.win_rate,
+                equity_curve=winner.equity_curve,
+                trades=winner.trades,
+                wizard_rankings=rankings,
+            )
+
+        # ── Regime mode: split into N windows ─────────────────────────────────
+        chunk = len(history) // n_windows
+        regime_splits: list[dict] = []
+        win_counts:    dict[str, int] = {sid: 0 for sid, _ in STRATEGIES}
+        full_rankings, full_results = _run_one_window(history)   # for the overall winner
+
+        for i in range(n_windows):
+            start = i * chunk
+            end   = start + chunk if i < n_windows - 1 else len(history)
+            window = history[start:end]
+            if len(window) < 5:
+                continue
+
+            # Label window by trend direction (first vs last price)
             try:
-                sub_req = self.req.model_copy(update={
-                    "strategy":  strategy_id,
-                    "date_from": None,   # already filtered
-                    "date_to":   None,
-                })
-                sub_engine = PredictionMarketBacktester(sub_req, history)
-                result = sub_engine.run()
-                if result.success:
-                    rankings.append({
-                        "strategy":     strategy_id,
-                        "name":         strategy_name,
-                        "total_return": result.total_return,
-                        "sharpe_ratio": result.sharpe_ratio,
-                        "max_drawdown": result.max_drawdown,
-                        "win_rate":     result.win_rate,
-                        "total_trades": result.total_trades,
-                    })
-                    results[strategy_id] = result
-            except Exception as exc:
-                log.warning("wizard: %s failed — %s", strategy_id, exc)
+                p_start = float(window[0]["p"])
+                p_end   = float(window[-1]["p"])
+                trend   = "bull" if p_end > p_start * 1.05 else "bear" if p_end < p_start * 0.95 else "sideways"
+            except Exception:
+                trend = "unknown"
 
-        if not rankings:
+            w_ranks, _ = _run_one_window(window)
+            if w_ranks:
+                win_counts[w_ranks[0]["strategy"]] += 1
+            regime_splits.append({
+                "window":    i + 1,
+                "start":     window[0].get("t"),
+                "end":       window[-1].get("t"),
+                "trend":     trend,
+                "rankings":  w_ranks,
+            })
+
+        # Enrich overall rankings with consistency data
+        n_valid = len(regime_splits)
+        for r in full_rankings:
+            wins = win_counts.get(r["strategy"], 0)
+            r["wins"]        = wins
+            r["consistency"] = round(wins / n_valid, 2) if n_valid else 0.0
+
+        # Re-sort: weight consistency equally with return
+        full_rankings.sort(
+            key=lambda x: (x.get("consistency", 0) * 0.5 + (x["total_return"] / 100) * 0.5),
+            reverse=True,
+        )
+
+        if not full_rankings or full_rankings[0]["strategy"] not in full_results:
             return self._error("Wizard: all strategies failed on this history.")
 
-        rankings.sort(key=lambda x: (x["total_return"], x["sharpe_ratio"]), reverse=True)
-        winner = results[rankings[0]["strategy"]]
-
+        winner = full_results[full_rankings[0]["strategy"]]
         return BacktestResult(
             success=True,
             condition_id=self.req.condition_id,
@@ -775,8 +864,58 @@ class PredictionMarketBacktester:
             win_rate=winner.win_rate,
             equity_curve=winner.equity_curve,
             trades=winner.trades,
-            wizard_rankings=rankings,
+            wizard_rankings=full_rankings,
+            regime_splits=regime_splits,
         )
+
+    def _swing_reversion(self, prob: float, date: str):
+        """
+        Swing Reversion — designed for range-bound oscillations on trending stocks.
+
+        Logic:
+          The rolling-high anchor used by Threshold drifts downward on bearish stocks,
+          making entries increasingly rare.  This strategy anchors to a short-window
+          SMA instead, so entries remain valid throughout the trend.
+
+          Entry:  price falls entry_threshold% below the SMA  →  buy the bounce
+          Exit:   price recovers exit_threshold% above the entry price  →  take profit
+          Stop:   hard stop_loss% below entry (prevents riding the downtrend)
+
+        Works on stocks only; falls through to nothing on prediction markets
+        (which are already 0–1 and don't exhibit the same oscillation pattern).
+
+        Parameters (reuses existing BacktestRequest fields):
+          window           int    10    SMA lookback window (candles)
+          entry_threshold  float  0.03  % dip below SMA to trigger entry
+          exit_threshold   float  0.05  % gain above entry price to take profit
+          stop_loss        float  0.02  % loss below entry for hard stop (optional)
+        """
+        if not self._is_stock:
+            return
+
+        window     = self.req.window
+        entry_pct  = self.req.entry_threshold   # e.g. 0.03 → enter when 3% below SMA
+        target_pct = self.req.exit_threshold    # e.g. 0.05 → exit when 5% above entry
+        stop       = self.req.stop_loss
+
+        if len(self.equity_curve) < window:
+            return
+
+        recent = [pt["price"] for pt in self.equity_curve[-window:]]
+        sma    = sum(recent) / len(recent)
+
+        if self.position == 0 and self.cash > 0 and not self._on_cooldown():
+            dip_from_sma = (sma - prob) / sma
+            if dip_from_sma >= entry_pct:
+                self._buy(prob, date, note=f"dip {dip_from_sma*100:.1f}% below SMA{window}")
+
+        elif self.position > 0:
+            gain = (prob - self.avg_entry) / self.avg_entry
+            loss = (self.avg_entry - prob) / self.avg_entry
+            if gain >= target_pct:
+                self._sell(prob, date, note=f"target +{gain*100:.1f}%")
+            elif stop is not None and loss >= stop:
+                self._sell(prob, date, forced=True, note=f"stop -{loss*100:.1f}%")
 
     # ── Short strategies ──────────────────────────────────────────────────────
 
@@ -871,6 +1010,44 @@ class PredictionMarketBacktester:
         self.short_position = 0.0
         self.short_entry = 0.0
 
+    def _macro_stock_gate(self) -> tuple[bool, float]:
+        """
+        Macro regime gate for stock/index entries only.
+        Returns (allow_entry, size_multiplier).
+
+        Only active when _is_stock is True.  Prediction markets skip this —
+        they use macro_zscore_mult and macro_kelly_caution directly instead.
+
+        Rules (applied in order, first match wins):
+          recession_risk=high                          → block all new longs
+          recession_risk=medium + tightening Fed       → allow, size ×0.50
+          recession_risk=medium                        → allow, size ×0.65
+          tightening + above_target inflation          → allow, size ×0.70
+          tightening                                   → allow, size ×0.85
+          above_target inflation + rising trend        → allow, size ×0.80
+          everything else (benign)                     → allow, size ×1.00
+        """
+        if not self._is_stock:
+            return True, 1.0
+
+        recession = getattr(self.req, "macro_recession_risk", "unknown")
+        fed       = getattr(self.req, "macro_fed_stance",     "unknown")
+        inflation = getattr(self.req, "macro_inflation",      "unknown")
+
+        if recession == "high":
+            return False, 0.0
+        if recession == "medium" and fed == "tightening":
+            return True, 0.50
+        if recession == "medium":
+            return True, 0.65
+        if fed == "tightening" and inflation == "above_target":
+            return True, 0.70
+        if fed == "tightening":
+            return True, 0.85
+        if inflation == "above_target":
+            return True, 0.80
+        return True, 1.0
+
     def _on_cooldown(self) -> bool:
         """Return True if not enough candles have passed since the last buy."""
         min_hold = getattr(self.req, "min_hold_days", 1)
@@ -909,31 +1086,47 @@ class PredictionMarketBacktester:
             return (prob - self.short_entry) / self.short_entry >= stop
         return prob >= self.short_entry + stop
 
+    def _fill_price(self, raw_price: float, side: str) -> float:
+        """
+        Apply one-way slippage to a raw mid-price.
+        BUY  fills at raw_price * (1 + slip)  — you pay more.
+        SELL fills at raw_price * (1 - slip)  — you receive less.
+        slip = slippage_bps / 10_000
+        """
+        slip = self.req.slippage_bps / 10_000
+        if side == "BUY":
+            return raw_price * (1.0 + slip)
+        return raw_price * (1.0 - slip)
+
     def _buy(self, prob: float, date: str, note: str = ""):
         """Deploy all available cash into YES shares."""
-        shares = self.cash / prob
-        self.avg_entry = prob
+        fill = self._fill_price(prob, "BUY")
+        shares = self.cash / fill
+        self.avg_entry = fill
         self.position  = shares
         self.cash      = 0.0
         self._last_buy_idx = self._tick_idx
         self.trades.append({
             "date":   date,
             "action": f"BUY{(' · ' + note) if note else ''}",
-            "price":  round(prob, 4),
+            "price":  round(fill, 4),
             "shares": round(shares, 4),
-            "value":  round(shares * prob, 4),
+            "value":  round(shares * fill, 4),
             "pnl":    None,
         })
 
     def _buy_partial(self, prob: float, date: str, shares: float, cost: float, note: str = ""):
         """Deploy a specific amount of cash — used by Kelly and Market Making."""
+        fill = self._fill_price(prob, "BUY")
+        # Recalculate shares and cost using fill price
+        shares = cost / fill
         if cost > self.cash:
             cost   = self.cash
-            shares = cost / prob
+            shares = cost / fill
         self.avg_entry = (
-            (self.avg_entry * self.position + prob * shares)
+            (self.avg_entry * self.position + fill * shares)
             / (self.position + shares)
-            if self.position > 0 else prob
+            if self.position > 0 else fill
         )
         self.position += shares
         self.cash     -= cost
@@ -941,27 +1134,28 @@ class PredictionMarketBacktester:
         self.trades.append({
             "date":   date,
             "action": f"BUY{(' · ' + note) if note else ''}",
-            "price":  round(prob, 4),
+            "price":  round(fill, 4),
             "shares": round(shares, 4),
             "value":  round(cost, 4),
             "pnl":    None,
         })
 
     def _sell(self, prob: float, date: str, forced: bool = False, note: str = ""):
-        pnl = (prob - self.avg_entry) * self.position
+        fill = self._fill_price(prob, "SELL")
+        pnl = (fill - self.avg_entry) * self.position
         # Use += not = : for full positions cash is already 0 (no change in behavior),
         # but for partial positions (_buy_partial via Kelly/Market Making) the
         # undeployed cash must survive the sell.
-        self.cash += self.position * prob
+        self.cash += self.position * fill
         action = "SELL (forced close)" if forced else "SELL"
         if note:
             action += f" · {note}"
         self.trades.append({
             "date":   date,
             "action": action,
-            "price":  round(prob, 4),
+            "price":  round(fill, 4),
             "shares": round(self.position, 4),
-            "value":  round(self.position * prob, 4),
+            "value":  round(self.position * fill, 4),
             "pnl":    round(pnl, 4),
         })
         self.position  = 0.0
@@ -970,11 +1164,29 @@ class PredictionMarketBacktester:
     # ── Metrics ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _sharpe(returns: pd.Series, rf: float = 0.02) -> float:
+    def _annualization_factor(history: list) -> float:
+        """
+        Derive periods-per-year from actual history timestamps instead of
+        assuming 252 trading days.  Works correctly for daily, 6h, 1h candles
+        and prediction-market tick data.
+
+        Method: total candle count divided by the time span in years.
+        Falls back to 252 if history is too short to measure reliably.
+        """
+        timestamps = [pt["t"] for pt in history if "t" in pt]
+        if len(timestamps) < 10:
+            return 252.0
+        span_years = (timestamps[-1] - timestamps[0]) / (365.25 * 24 * 3600)
+        if span_years < 0.01:
+            return 252.0
+        return len(timestamps) / span_years
+
+    @staticmethod
+    def _sharpe(returns: pd.Series, rf: float = 0.02, ann_factor: float = 252.0) -> float:
         if len(returns) < 2 or returns.std() == 0:
             return 0.0
-        excess = returns - rf / 252
-        return float(np.sqrt(252) * excess.mean() / excess.std())
+        excess = returns - rf / ann_factor
+        return float(np.sqrt(ann_factor) * excess.mean() / excess.std())
 
     @staticmethod
     def _max_drawdown(equity: pd.Series) -> float:

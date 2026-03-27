@@ -1,3 +1,4 @@
+import React from "react";
 import type { StrategyParams } from "../../types";
 
 interface ParamSlidersProps {
@@ -81,9 +82,9 @@ const PARAMS_STOCK: Record<string, ParamDef[]> = {
     { key: "stop_loss",     label: "Loss Stop",   min: 0.01, max: 0.20, step: 0.01, fmt: pct, nullable: true },
   ],
   mean_reversion: [
-    { key: "zscore_window", label: "Window",      min: 5,    max: 100,  step: 1,   fmt: v => `${v} days` },
-    { key: "zscore_entry",  label: "Entry Z",     min: 0.5,  max: 4.0,  step: 0.1, fmt: v => `${v.toFixed(1)}σ` },
-    { key: "stop_loss",     label: "Loss Stop",   min: 0.01, max: 0.20, step: 0.01, fmt: pct, nullable: true },
+    { key: "lookback_window",     label: "Window",     min: 5,   max: 60,  step: 1,   fmt: v => `${v} bars` },
+    { key: "reversion_threshold", label: "Entry σ",    min: 0.5, max: 4.0, step: 0.1, fmt: v => `${v.toFixed(1)}σ` },
+    { key: "stop_loss",           label: "Loss Stop",  min: 0.01, max: 0.20, step: 0.01, fmt: pct, nullable: true },
   ],
   // Kelly: fractional sizing, entry/exit as % change
   kelly: [
@@ -96,6 +97,13 @@ const PARAMS_STOCK: Record<string, ParamDef[]> = {
   market_making: [
     { key: "mm_spread", label: "Spread %",  min: 0.005, max: 0.10, step: 0.005, fmt: pct },
     { key: "stop_loss", label: "Stop Loss", min: 0.01,  max: 0.20, step: 0.01,  fmt: pct, nullable: true },
+  ],
+  // Swing Reversion: SMA dip catcher for oscillating/bearish stocks
+  swing_reversion: [
+    { key: "window",          label: "SMA Window",  min: 5,    max: 50,   step: 1,    fmt: v => `${v} days` },
+    { key: "entry_threshold", label: "Dip Entry",   min: 0.01, max: 0.15, step: 0.005,fmt: pct },
+    { key: "exit_threshold",  label: "Profit Tgt",  min: 0.01, max: 0.20, step: 0.005,fmt: pct },
+    { key: "stop_loss",       label: "Hard Stop",   min: 0.01, max: 0.15, step: 0.005,fmt: pct, nullable: true },
   ],
   // Short momentum: only stop loss (entry/exit driven by price direction)
   short_momentum: [
@@ -118,6 +126,22 @@ const PARAMS_STOCK: Record<string, ParamDef[]> = {
   ],
 };
 
+// Wizard strategy lists (for the picker UI)
+const WIZARD_LONG_STRATS = [
+  { id: "threshold",       label: "Threshold" },
+  { id: "momentum",        label: "Momentum" },
+  { id: "zscore_reversion",label: "Z-Score" },
+  { id: "kelly",           label: "Kelly" },
+  { id: "mean_reversion",  label: "Mean Rev" },
+  { id: "market_making",   label: "Mkt Making" },
+  { id: "swing_reversion", label: "Swing Rev" },
+];
+const WIZARD_SHORT_STRATS = [
+  { id: "short_momentum", label: "Short Mom" },
+  { id: "short_zscore",   label: "Short Z" },
+];
+const WIZARD_LONG_DEFAULT = WIZARD_LONG_STRATS.map(s => s.id).sort().join(",");
+
 // Wizard has no user-tunable params — it runs all strategies with current settings
 const WIZARD_NOTE = null;
 // Register empty entries so the lookup doesn't fall through to the wrong set
@@ -139,9 +163,14 @@ export const DEFAULT_PARAMS: StrategyParams = {
   xgb_max_depth:     3,
   xgb_train_frac:    0.30,
   xgb_confidence:    0.55,
-  window:            14,
-  momentum_min:      5.0,
-  trail_pct:         10.0,
+  window:              14,
+  momentum_min:        5.0,
+  trail_pct:           10.0,
+  lookback_window:     15,
+  reversion_threshold: 2.0,
+  slippage_bps:        5.0,
+  wizard_windows:      1,
+  wizard_strategies:   [],
 };
 
 export default function ParamSliders({ strategy, params, onChange, exchange }: ParamSlidersProps) {
@@ -150,11 +179,110 @@ export default function ParamSliders({ strategy, params, onChange, exchange }: P
   const defs = paramMap[strategy] ?? PARAMS[strategy];
   // wizard and other no-param strategies show a note instead of sliders
   if (!defs) {
-    if (strategy === "wizard") return (
-      <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)", fontSize: 9, color: "var(--muted)" }}>
-        No parameters — Wizard runs all long strategies with current settings and returns the winner.
-      </div>
-    );
+    if (strategy === "wizard") {
+      const wins = params.wizard_windows as number ?? 1;
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+            Wizard Parameters
+          </div>
+          {/* Regime windows */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontSize: 9, color: "var(--muted2)", width: 62, flexShrink: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Regimes
+            </div>
+            <input
+              type="range" min={1} max={4} step={1}
+              value={wins}
+              onChange={e => onChange({ ...params, wizard_windows: parseInt(e.target.value) })}
+              style={{ flex: 1, accentColor: "#a855f7", cursor: "pointer" }}
+            />
+            <div style={{ fontSize: 10, color: "#a855f7", fontFamily: "IBM Plex Mono, monospace", width: 44, textAlign: "right", flexShrink: 0 }}>
+              {wins === 1 ? "off" : `${wins}×`}
+            </div>
+          </div>
+          <div style={{ fontSize: 9, color: "var(--muted)", lineHeight: 1.5 }}>
+            {wins === 1
+              ? "Full history — picks the top strategy by total return."
+              : `Splits history into ${wins} equal windows. Ranks by cross-window consistency.`}
+          </div>
+          {/* Slippage */}
+          {(() => {
+            const slip = params.slippage_bps as number ?? 5;
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ fontSize: 9, color: "var(--muted2)", width: 62, flexShrink: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>Slippage</div>
+                <input type="range" min={0} max={50} step={1} value={slip}
+                  onChange={e => onChange({ ...params, slippage_bps: parseFloat(e.target.value) })}
+                  style={{ flex: 1, accentColor: "var(--accent)", cursor: "pointer" }} />
+                <div style={{ fontSize: 10, color: "var(--accent)", fontFamily: "IBM Plex Mono, monospace", width: 44, textAlign: "right", flexShrink: 0 }}>
+                  {slip.toFixed(0)} bps
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Strategy picker */}
+          {(() => {
+            const selected: string[] = params.wizard_strategies ?? [];
+            const isDefault = selected.length === 0;
+            const isChecked = (id: string) =>
+              isDefault ? !id.startsWith("short_") : selected.includes(id);
+
+            const toggle = (id: string) => {
+              const current = isDefault
+                ? WIZARD_LONG_STRATS.map(s => s.id)
+                : [...selected];
+              const next = current.includes(id)
+                ? current.filter(s => s !== id)
+                : [...current, id];
+              const nextKey = [...next].sort().join(",");
+              onChange({ ...params, wizard_strategies: nextKey === WIZARD_LONG_DEFAULT ? [] : next });
+            };
+
+            const chipStyle = (checked: boolean, isShort: boolean): React.CSSProperties => ({
+              display: "inline-flex", alignItems: "center", gap: 4,
+              padding: "2px 7px", borderRadius: 10, cursor: "pointer",
+              fontSize: 9, fontFamily: "IBM Plex Mono, monospace",
+              border: `1px solid ${checked ? (isShort ? "#f97316" : "#a855f7") : "var(--border2)"}`,
+              background: checked ? (isShort ? "rgba(249,115,22,0.12)" : "rgba(168,85,247,0.12)") : "transparent",
+              color: checked ? (isShort ? "#f97316" : "#a855f7") : "var(--muted)",
+              transition: "all 0.12s",
+              userSelect: "none",
+            });
+
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 2 }}>
+                <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+                  Strategies
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {WIZARD_LONG_STRATS.map(s => (
+                    <span key={s.id} style={chipStyle(isChecked(s.id), false)} onClick={() => toggle(s.id)}>
+                      {isChecked(s.id) ? "✓" : "+"} {s.label}
+                    </span>
+                  ))}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {WIZARD_SHORT_STRATS.map(s => (
+                    <span key={s.id} style={chipStyle(isChecked(s.id), true)} onClick={() => toggle(s.id)}>
+                      {isChecked(s.id) ? "✓" : "+"} {s.label}
+                    </span>
+                  ))}
+                </div>
+                {selected.length > 0 && (
+                  <div style={{ fontSize: 8, color: "var(--muted)", lineHeight: 1.4 }}>
+                    {selected.length} strateg{selected.length === 1 ? "y" : "ies"} selected
+                    {" · "}<span style={{ cursor: "pointer", color: "var(--accent)", textDecoration: "underline" }}
+                      onClick={() => onChange({ ...params, wizard_strategies: [] })}>reset to default</span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      );
+    }
     return null;
   }
 
@@ -166,6 +294,27 @@ export default function ParamSliders({ strategy, params, onChange, exchange }: P
       <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
         Parameters
       </div>
+
+      {/* Universal slippage slider — always shown */}
+      {(() => {
+        const slip = params.slippage_bps as number ?? 5;
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontSize: 9, color: "var(--muted2)", width: 62, flexShrink: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Slippage
+            </div>
+            <input
+              type="range" min={0} max={50} step={1}
+              value={slip}
+              onChange={e => onChange({ ...params, slippage_bps: parseFloat(e.target.value) })}
+              style={{ flex: 1, accentColor: "var(--accent)", cursor: "pointer" }}
+            />
+            <div style={{ fontSize: 10, color: "var(--accent)", fontFamily: "IBM Plex Mono, monospace", width: 44, textAlign: "right", flexShrink: 0 }}>
+              {slip.toFixed(0)} bps
+            </div>
+          </div>
+        );
+      })()}
 
       {defs.map(def => {
         const rawVal = params[def.key];

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..models.schemas import SignalSchema
-from .db import get_cursor, row_to_dict
+from .db import get_cursor, row_to_dict, asset_type_from_exchange
 
 
 # ── In-memory cache (populated on first access) ───────────────────────────────
@@ -60,6 +60,7 @@ def open_position(signal: SignalSchema, category: str = "Other", exchange: str =
         "close_reason": None,
         "realized_pnl": None,
         "exchange":     exchange,
+        "asset_type":   asset_type_from_exchange(exchange),
     }
     with get_cursor() as cur:
         cur.execute("""
@@ -67,12 +68,13 @@ def open_position(signal: SignalSchema, category: str = "Other", exchange: str =
                 (id, signal_id, market_id, market_title, category, strategy, side,
                  entry_price, current_prob, exit_target, stop_loss, shares, capital,
                  status, entry_date, closed_at, exit_prob, close_reason, realized_pnl,
-                 exchange)
+                 exchange, asset_type)
             VALUES
                 (%(id)s, %(signal_id)s, %(market_id)s, %(market_title)s, %(category)s,
                  %(strategy)s, %(side)s, %(entry_price)s, %(current_prob)s, %(exit_target)s,
                  %(stop_loss)s, %(shares)s, %(capital)s, %(status)s, %(entry_date)s,
-                 %(closed_at)s, %(exit_prob)s, %(close_reason)s, %(realized_pnl)s, %(exchange)s)
+                 %(closed_at)s, %(exit_prob)s, %(close_reason)s, %(realized_pnl)s,
+                 %(exchange)s, %(asset_type)s)
         """, pos)
     _open[pos["id"]] = pos
     return pos

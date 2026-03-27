@@ -19,6 +19,8 @@ interface BacktestPanelProps {
   executionMode: ExecutionMode;
   onExecutionModeChange: (mode: ExecutionMode) => void;
   exchange: string;
+  capital: number;
+  onCapitalChange: (v: number) => void;
   dateFrom: string;
   dateTo: string;
   onDateFromChange: (v: string) => void;
@@ -40,6 +42,8 @@ export default function BacktestPanel({
   executionMode,
   onExecutionModeChange,
   exchange,
+  capital,
+  onCapitalChange,
   dateFrom,
   dateTo,
   onDateFromChange,
@@ -84,6 +88,8 @@ export default function BacktestPanel({
         executionMode={executionMode}
         onExecutionModeChange={onExecutionModeChange}
         exchange={exchange}
+        capital={capital}
+        onCapitalChange={onCapitalChange}
       />
 
       {/* Drag handle */}
@@ -155,6 +161,11 @@ export default function BacktestPanel({
             }}
           />
         </div>
+        {executionMode === "auto" && strategyParams.stop_loss === null && (
+          <div style={{ fontSize: 8, color: "#ef4444", fontFamily: "IBM Plex Mono, monospace", marginBottom: 4 }}>
+            ⚠ HARBOR: stop-loss required for AUTO
+          </div>
+        )}
         <button
           className="queue-run"
           disabled={!queuedMarkets.length || running}

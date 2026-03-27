@@ -44,6 +44,11 @@
    - [XGBoost Macro Features](#87-xgboost-macro-features)
    - [FRED Dashboard](#88-fred-dashboard)
    - [API Reference](#89-api-reference)
+9. [Security](#9-security)
+   - [TLS / HTTPS](#91-tls--https)
+   - [JWT Authentication](#92-jwt-authentication)
+   - [Changing Your Password](#93-changing-your-password)
+   - [Hardening Checklist](#94-hardening-checklist)
 
 ---
 
@@ -141,6 +146,11 @@ STOP_LOSS_POLL_INTERVAL=30     # seconds between position checks
 
 # Data providers
 FRED_API_KEY=your_fred_api_key
+
+# JWT Authentication (see Section 9)
+JWT_SECRET=replace-with-a-long-random-string
+JWT_EXPIRE_MINUTES=480
+ADMIN_PASSWORD_HASH=sha256-hex-of-your-password
 ```
 
 > **Important:** Never commit `.env` to version control. File permissions must be `600`. Keys are never returned to the browser — the UI only sees a `configured: true/false` flag.
@@ -1913,3 +1923,154 @@ Returns the latest and previous observation for each series, the period-to-perio
 | `/refresh` returns 503 "budget nearly exhausted" | > 95 of 100 free calls used | Upgrade to a paid FRED plan at fred.stlouisfed.org |
 | `p_true` is `null` after `/prior` call | No series matched, or no threshold found in title | Check that the title contains a FRED keyword and a `%` figure |
 | `data_quality: "partial"` in macro-context | Some series not yet cached | Run `refresh` for the missing series |
+
+---
+
+## 9. Security
+
+PolyBack is a local-first platform, but it exposes a FastAPI backend on the network (LAN port 8000) and a Vite frontend (port 5173). Two layers protect it: **TLS** (encrypted transport) and **JWT authentication** (identity gate).
+
+---
+
+### 9.1 TLS / HTTPS
+
+PolyBack uses [mkcert](https://github.com/FiloSottile/mkcert) to generate locally-trusted TLS certificates so all traffic between browser and server is encrypted — including across the LAN.
+
+**One-time setup (already done if you ran `./start.sh` before):**
+
+```bash
+# Install mkcert (Ubuntu/Debian)
+sudo apt install mkcert
+
+# Create the local CA and import it into the system trust store
+mkcert -install
+
+# If the above fails (sudo unavailable), import manually into Chrome's NSS db:
+certutil -d ~/.pki/nssdb -A -t "CT,," -n mkcert -i "$(mkcert -CAROOT)/rootCA.pem"
+
+# Generate certs for localhost and your LAN IP
+cd ~/quant_project/Polymarket
+mkdir -p certs
+mkcert -key-file certs/key.pem -cert-file certs/cert.pem localhost 127.0.0.1 10.0.0.46
+```
+
+**Starting the server with TLS:**
+
+Use `./start.sh` which launches both processes with the correct flags:
+
+```bash
+cd ~/quant_project/Polymarket
+./start.sh
+```
+
+- Backend: `https://localhost:8000`
+- Frontend: `https://localhost:5173` (also accessible at `https://10.0.0.46:5173` from LAN)
+
+> **Note:** `certs/` and `*.pem` / `*.key` are in `.gitignore` and are never committed.
+
+---
+
+### 9.2 JWT Authentication
+
+All API routes (except `POST /api/auth/login`) require a valid **Bearer token**. The frontend handles this transparently — you see a login screen when no token is present, and the token is stored in `localStorage` for the session duration.
+
+**How it works:**
+
+1. Browser loads the app → checks `localStorage` for `polyback_token`
+2. If missing or expired → **Login Screen** is shown
+3. User enters password → `POST /api/auth/login` returns a signed JWT
+4. Token stored in `localStorage`; all subsequent API calls send `Authorization: Bearer <token>`
+5. On 401 (expired/invalid token) → token is cleared, Login Screen re-appears automatically
+
+**Token lifetime:** 8 hours (default). Configurable via `JWT_EXPIRE_MINUTES` in `.env`.
+
+**Relevant files:**
+
+| File | Role |
+|------|------|
+| `backend/middleware/auth.py` | `create_token()`, `verify_password()`, `require_auth` dependency |
+| `backend/routes/auth.py` | `POST /api/auth/login` — public endpoint |
+| `backend/main.py` | All protected routers get `dependencies=[Depends(require_auth)]` |
+| `frontend/src/lib/apiFetch.ts` | Injects Bearer header, handles 401 → logout |
+| `frontend/src/components/shared/LoginScreen.tsx` | Password form UI |
+| `frontend/src/App.tsx` | Gates the entire app behind the login check |
+
+**API login endpoint:**
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{ "password": "yourpassword" }
+```
+
+Response:
+```json
+{ "access_token": "<jwt>", "token_type": "bearer" }
+```
+
+**Signing out:** Click the `⏻` button in the top-right corner of the app. This clears the stored token and returns to the Login Screen immediately.
+
+---
+
+### 9.3 Changing Your Password
+
+The password is stored as a SHA-256 hash in `.env` — the plaintext never touches disk.
+
+**Step 1 — Generate the hash for your new password:**
+
+```bash
+python3 -c "import hashlib; print(hashlib.sha256(b'yournewpassword').hexdigest())"
+```
+
+**Step 2 — Update `.env`:**
+
+```env
+ADMIN_PASSWORD_HASH=<paste the output here>
+```
+
+**Step 3 — Restart the backend** (the hash is read at startup):
+
+```bash
+# Kill existing backend and restart via start.sh, or:
+uvicorn backend.main:app --reload --port 8000 \
+  --ssl-keyfile certs/key.pem --ssl-certfile certs/cert.pem
+```
+
+> **Default password:** `polyback` — change this before exposing the platform on any shared network.
+
+**Rotating the JWT secret** (invalidates all existing sessions):
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Paste the output as `JWT_SECRET` in `.env` and restart. All clients will be logged out.
+
+---
+
+### 9.4 Hardening Checklist
+
+| Item | Status | Notes |
+|------|--------|-------|
+| TLS enabled | ✅ | `./start.sh` with mkcert certs |
+| JWT auth on all routes | ✅ | `require_auth` dependency on every router |
+| Default password changed | ⬜ | Change from `polyback` before going LAN-accessible |
+| `.env` is `chmod 600` | ⬜ | `chmod 600 .env` — only owner can read |
+| `.env` not in git | ✅ | Listed in `.gitignore` |
+| `certs/` not in git | ✅ | Listed in `.gitignore` |
+| CORS locked to known origins | ✅ | `allow_origins` in `main.py` lists specific hosts |
+| JWT secret is random | ✅ | Generated with `secrets.token_hex(32)` |
+| Token expiry set | ✅ | Default 8 hours; adjust `JWT_EXPIRE_MINUTES` |
+| Firewall blocks ports 8000/5173 from WAN | ⬜ | Recommend UFW rules if on a routed network |
+
+**Recommended UFW rules (if running on a machine with a public interface):**
+
+```bash
+# Allow LAN subnet only (adjust to your subnet)
+sudo ufw allow from 10.0.0.0/24 to any port 8000
+sudo ufw allow from 10.0.0.0/24 to any port 5173
+# Block all other external access to those ports
+sudo ufw deny 8000
+sudo ufw deny 5173
+```

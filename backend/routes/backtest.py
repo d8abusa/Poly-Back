@@ -7,12 +7,14 @@ from pydantic import Field
 from ..models.schemas import (
     BacktestRequest, BacktestResult,
     BatchBacktestRequest, BatchBacktestResult,
+    TIER_MIN_HOLD,
 )
 from ..services.exchange_router import get_exchange_client
 from ..services.backtest_engine import PredictionMarketBacktester, run_batch
 from ..services.macro_context import get_macro_context
 from ..services.fred_prior import calibrate_from_title
 from ..services.db import save_backtest_run, get_backtest_runs, get_backtest_run, purge_old_records
+from ..services.risk_manager import get_config as get_risk_config
 
 log = logging.getLogger(__name__)
 
@@ -28,9 +30,12 @@ def _inject_macro(req: BacktestRequest, market_title: str = "") -> BacktestReque
     try:
         ctx = get_macro_context()
         req = req.model_copy(update={
-            "macro_zscore_mult":   ctx.zscore_multiplier,
-            "macro_kelly_caution": ctx.kelly_caution,
-            "macro_features":      ctx.features,
+            "macro_zscore_mult":    ctx.zscore_multiplier,
+            "macro_kelly_caution":  ctx.kelly_caution,
+            "macro_features":       ctx.features,
+            "macro_recession_risk": ctx.recession_risk,
+            "macro_fed_stance":     ctx.fed_stance,
+            "macro_inflation":      ctx.inflation_level,
         })
         log.debug(
             "macro context: recession=%s fed=%s inflation=%s zscore_mult=%.2f kelly_caution=%.2f",
@@ -94,19 +99,48 @@ async def run_backtest_batch(req: BatchBacktestRequest, exchange: str = "polymar
     if not req.markets:
         raise HTTPException(status_code=400, detail="markets list is empty")
 
+    # ── HARBOR: stop-loss enforcement ─────────────────────────────────────────
+    # Auto mode places orders with no human review — stop-loss is mandatory.
+    # Confirm mode still has manual approval, so the user can set stop-loss then.
+    _rcfg = get_risk_config()
+    if _rcfg.get("require_stop_loss", False) and req.execution_mode in ("auto",):
+        if req.stop_loss is None:
+            default_sl = (
+                _rcfg.get("default_stop_loss_pm", 0.10)
+                if exchange != "yahoo"
+                else _rcfg.get("default_stop_loss", 0.08)
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"HARBOR: stop_loss is required for live execution mode '{req.execution_mode}'. "
+                    f"Set stop_loss to a value between 0.01 and 0.99 "
+                    f"(recommended minimum: {default_sl:.0%})."
+                ),
+            )
+
     client = get_exchange_client(exchange)
 
     market_ids = [m.condition_id for m in req.markets]
     token_ids  = [m.token_id     for m in req.markets]
     log.info("batch backtest: %d market(s), strategy=%s, exchange=%s", len(market_ids), req.strategy, exchange)
 
-    histories, fetch_ms = await client.fetch_market_histories_batch(
-        market_ids, token_ids=token_ids, interval=req.interval
-    )
+    try:
+        histories, fetch_ms = await client.fetch_market_histories_batch(
+            market_ids, token_ids=token_ids, interval=req.interval
+        )
+    except Exception as exc:
+        log.exception("fetch_market_histories_batch failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Price history fetch failed: {exc}")
 
-    # Stocks trade on daily candles — enforce a 3-day minimum hold to avoid
-    # whipsaw re-entries that prediction market strategies trigger every tick.
-    min_hold = 3 if exchange == "yahoo" else 1
+    # Stocks: enforce a per-tier minimum hold to avoid whipsaw re-entries.
+    # Standard = 3d (cash account settlement), Margin = 2d, DayTrading = 1d.
+    # Prediction markets have no settlement constraint so min_hold stays 1.
+    if exchange == "yahoo":
+        min_hold = TIER_MIN_HOLD.get(req.account_tier, 3)
+    else:
+        min_hold = 1
+    log.info("account_tier=%s min_hold=%d exchange=%s", req.account_tier, min_hold, exchange)
 
     # Default stock backtests to the last 365 days when no window is specified.
     # Without this, Yahoo returns history back to IPO (AAPL → 1980) and the

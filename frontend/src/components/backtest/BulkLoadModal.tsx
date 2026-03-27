@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import type { Market } from "../../types";
+import { apiFetch } from "../../lib/apiFetch";
 
 interface BulkLoadModalProps {
   markets: Market[];          // already-loaded market list for the picker
@@ -69,7 +70,7 @@ export default function BulkLoadModal({ markets, onAdd, onClose }: BulkLoadModal
     const settled: FetchResult[] = await Promise.all(
       ids.map(async id => {
         try {
-          const r = await fetch(`/api/markets/${encodeURIComponent(id)}`);
+          const r = await apiFetch(`/api/markets/${encodeURIComponent(id)}`);
           if (!r.ok) return { id, market: null, error: `HTTP ${r.status}` };
           const data = await r.json();
           const market: Market = data.market ?? data;

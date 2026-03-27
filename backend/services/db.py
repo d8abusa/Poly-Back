@@ -31,6 +31,23 @@ def get_conn():
         conn.close()
 
 
+def asset_type_from_exchange(exchange: str) -> str:
+    """
+    Derive explicit asset class from exchange name.
+    Used when recording positions and signals so trading rules
+    (PDT, margin cooldowns) can be applied without re-inferring from exchange.
+
+      stock            — equities (Yahoo Finance)
+      crypto           — digital assets (Coinbase)
+      prediction_market — binary outcome contracts (Kalshi, Polymarket, Manifold)
+    """
+    if exchange == "yahoo":
+        return "stock"
+    if exchange in ("coinbase", "coinbase_advanced"):
+        return "crypto"
+    return "prediction_market"
+
+
 def init_db() -> None:
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -55,7 +72,8 @@ def init_db() -> None:
                     exit_prob    REAL,
                     close_reason TEXT,
                     realized_pnl REAL,
-                    exchange     TEXT DEFAULT 'coinbase'
+                    exchange     TEXT DEFAULT 'coinbase',
+                    asset_type   TEXT DEFAULT 'prediction_market'
                 );
 
                 CREATE TABLE IF NOT EXISTS signals (
@@ -73,6 +91,7 @@ def init_db() -> None:
                     execution_mode   TEXT,
                     created_at       TEXT,
                     resolved_at      TEXT,
+                    asset_type       TEXT DEFAULT 'prediction_market',
                     payload          TEXT
                 );
 
@@ -116,6 +135,47 @@ def init_db() -> None:
 
                 CREATE INDEX IF NOT EXISTS idx_backtest_runs_run_at
                     ON backtest_runs (run_at DESC);
+
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    id           TEXT PRIMARY KEY,
+                    market_id    TEXT UNIQUE NOT NULL,
+                    market_title TEXT NOT NULL,
+                    category     TEXT NOT NULL DEFAULT 'Other',
+                    added_at     TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id                TEXT PRIMARY KEY,
+                    watchlist_item_id TEXT REFERENCES watchlist(id) ON DELETE CASCADE,
+                    market_id         TEXT NOT NULL,
+                    market_title      TEXT NOT NULL,
+                    trigger           TEXT NOT NULL,
+                    triggered_at      TEXT,
+                    dismissed_at      TEXT,
+                    read              BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at        TEXT NOT NULL
+                );
+            """)
+
+            # ── Migrations ────────────────────────────────────────────────────
+            # Add asset_type to positions if not present (backfill from exchange)
+            cur.execute("""
+                ALTER TABLE positions ADD COLUMN IF NOT EXISTS
+                    asset_type TEXT DEFAULT 'prediction_market';
+            """)
+            cur.execute("""
+                UPDATE positions SET asset_type = CASE
+                    WHEN exchange = 'yahoo'                            THEN 'stock'
+                    WHEN exchange IN ('coinbase', 'coinbase_advanced') THEN 'crypto'
+                    ELSE 'prediction_market'
+                END
+                WHERE asset_type IS NULL OR asset_type = 'prediction_market';
+            """)
+
+            # Add asset_type to signals if not present (backfill from payload exchange field)
+            cur.execute("""
+                ALTER TABLE signals ADD COLUMN IF NOT EXISTS
+                    asset_type TEXT DEFAULT 'prediction_market';
             """)
 
 
@@ -151,6 +211,8 @@ def row_to_list(rows) -> list[dict]:
 def signal_to_row(sig) -> dict:
     """Convert a SignalSchema to a flat dict for DB storage."""
     data = sig.model_dump() if hasattr(sig, "model_dump") else sig.__dict__
+    exchange   = data.get("exchange", "polymarket")
+    asset_type = data.get("asset_type") or asset_type_from_exchange(exchange)
     return {
         "id":               data.get("id"),
         "status":           data.get("status"),
@@ -166,6 +228,7 @@ def signal_to_row(sig) -> dict:
         "execution_mode":   data.get("execution_mode"),
         "created_at":       data.get("created_at"),
         "resolved_at":      data.get("resolved_at"),
+        "asset_type":       asset_type,
         "payload":          json.dumps(data),
     }
 

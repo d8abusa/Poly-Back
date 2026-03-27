@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { Market, StrategyParams } from "../../types";
+import { apiFetch } from "../../lib/apiFetch";
 
 interface ScannerStatus {
   running: boolean;
@@ -66,7 +67,7 @@ export default function ScannerControls({
   // Poll status while expanded or running
   const fetchStatus = useCallback(async () => {
     try {
-      const r = await fetch("/api/scanner/status");
+      const r = await apiFetch("/api/scanner/status");
       if (r.ok) setStatus(await r.json());
     } catch {}
   }, []);
@@ -99,7 +100,7 @@ export default function ScannerControls({
         execution_mode:   executionMode,
         exchange,
       };
-      const r = await fetch("/api/scanner/start", {
+      const r = await apiFetch("/api/scanner/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -113,7 +114,7 @@ export default function ScannerControls({
   async function handleStop() {
     setLoading(true);
     try {
-      await fetch("/api/scanner/stop", { method: "POST" });
+      await apiFetch("/api/scanner/stop", { method: "POST" });
       await fetchStatus();
     } finally {
       setLoading(false);
@@ -123,7 +124,7 @@ export default function ScannerControls({
   async function applyInterval(secs: number) {
     setIntervalSecs(secs);
     if (status?.running) {
-      await fetch("/api/scanner/interval", {
+      await apiFetch("/api/scanner/interval", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ seconds: secs }),

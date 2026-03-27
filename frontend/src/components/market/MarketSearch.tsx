@@ -13,6 +13,8 @@ interface MarketSearchProps {
   /** When true, the search box calls onLiveSearch instead of filtering locally */
   liveSearch?: boolean;
   onLiveSearch?: (q: string) => void;
+  /** Trigger a fresh price pull from the backend */
+  onRefresh?: () => void;
 }
 
 const SORT_OPTIONS = [
@@ -33,6 +35,7 @@ export default function MarketSearch({
   onToggleQueue,
   liveSearch = false,
   onLiveSearch,
+  onRefresh,
 }: MarketSearchProps) {
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("All");
@@ -114,6 +117,28 @@ export default function MarketSearch({
         <span className="result-count">
           {filtered.length} result{filtered.length !== 1 ? "s" : ""}
         </span>
+        {onRefresh && (
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            title="Refresh prices"
+            style={{
+              marginLeft: "auto",
+              padding: "2px 8px",
+              borderRadius: 4,
+              border: "1px solid var(--border2)",
+              background: "var(--surface2)",
+              color: loading ? "var(--muted)" : "var(--accent)",
+              fontSize: 11,
+              fontFamily: "IBM Plex Mono, monospace",
+              cursor: loading ? "not-allowed" : "pointer",
+              display: "flex", alignItems: "center", gap: 4,
+            }}
+          >
+            <span style={{ display: "inline-block", animation: loading ? "spin 1s linear infinite" : "none" }}>⟳</span>
+            {loading ? "…" : "Refresh"}
+          </button>
+        )}
       </div>
 
       {/* Market list */}

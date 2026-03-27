@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { THEMES, applyTheme, getActiveThemeId } from "../../theme";
 import CronToggle from "./CronToggle";
+import { apiFetch } from "../../lib/apiFetch";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -192,7 +193,7 @@ function ExchangeSection({
 
     setSaving(true);
     try {
-      const resp = await fetch(`/api/settings/${exKey}`, {
+      const resp = await apiFetch(`/api/settings/${exKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -211,7 +212,7 @@ function ExchangeSection({
 
   const handleClear = async (fieldEnvKey: string) => {
     try {
-      const resp = await fetch(`/api/settings/${exKey}/${fieldEnvKey}`, { method: "DELETE" });
+      const resp = await apiFetch(`/api/settings/${exKey}/${fieldEnvKey}`, { method: "DELETE" });
       if (!resp.ok) throw new Error(await resp.text());
       const data = await resp.json();
       onSaved(data.status);
@@ -340,7 +341,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [cronSaving,     setCronSaving]     = useState(false);
 
   useEffect(() => {
-    fetch("/api/settings")
+    apiFetch("/api/settings")
       .then(r => r.json())
       .then(setSettings)
       .catch(() => {})
@@ -360,7 +361,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   }, []);
 
   const checkCronStatus = () => {
-    fetch("/api/cron/status")
+    apiFetch("/api/cron/status")
       .then(r => r.json())
       .then(data => setCronEnabled(data.enabled))
       .catch(() => {});
@@ -370,7 +371,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setCronSaving(true);
     try {
       const action = cronEnabled ? "disable" : "enable";
-      const resp = await fetch(`/api/cron/${action}`, {
+      const resp = await apiFetch(`/api/cron/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ schedule: "0 * * * *" }), // Hourly by default

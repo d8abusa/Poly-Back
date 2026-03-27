@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { Signal, ExecutionMode } from "../../types";
 import ConfirmationCard from "./ConfirmationCard";
+import { apiFetch } from "../../lib/apiFetch";
 
 interface SignalQueueProps {
   executionMode: ExecutionMode;
@@ -11,7 +12,7 @@ export default function SignalQueue({ executionMode }: SignalQueueProps) {
 
   const loadSignals = async () => {
     try {
-      const res = await fetch("/api/signals?status=pending");
+      const res = await apiFetch("/api/signals?status=pending");
       if (res.ok) {
         const data = await res.json();
         setSignals(data.signals ?? []);
@@ -28,7 +29,7 @@ export default function SignalQueue({ executionMode }: SignalQueueProps) {
   }, []);
 
   const handleApprove = async (signalId: string, modifiedSize?: number) => {
-    await fetch(`/api/signals/${signalId}/approve`, {
+    await apiFetch(`/api/signals/${signalId}/approve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ modified_size: modifiedSize ?? null }),
@@ -37,12 +38,12 @@ export default function SignalQueue({ executionMode }: SignalQueueProps) {
   };
 
   const handleReject = async (signalId: string) => {
-    await fetch(`/api/signals/${signalId}/reject`, { method: "POST" });
+    await apiFetch(`/api/signals/${signalId}/reject`, { method: "POST" });
     setSignals(s => s.filter(x => x.id !== signalId));
   };
 
   const handleModify = async (signalId: string, size: number, price?: number) => {
-    await fetch(`/api/signals/${signalId}/modify`, {
+    await apiFetch(`/api/signals/${signalId}/modify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ size, price: price ?? null }),

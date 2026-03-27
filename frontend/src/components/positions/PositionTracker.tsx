@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { Position, PositionSummary } from "../../types";
+import { apiFetch } from "../../lib/apiFetch";
 
 // ── Live position (extends Position with locally-managed prob) ─────────────────
 interface LivePosition extends Position {
@@ -256,8 +257,8 @@ export default function PositionTracker() {
   const loadPositions = useCallback(async () => {
     try {
       const [posRes, sumRes] = await Promise.all([
-        fetch("/api/positions"),
-        fetch("/api/positions/summary"),
+        apiFetch("/api/positions"),
+        apiFetch("/api/positions/summary"),
       ]);
       if (!posRes.ok || !sumRes.ok) return;
       const [posData, sumData] = await Promise.all([posRes.json(), sumRes.json()]);
@@ -324,7 +325,7 @@ export default function PositionTracker() {
   const handleConfirmClose = async () => {
     if (!closingId) return;
     const pos = livePositions.find(p => p.id === closingId);
-    const res = await fetch(`/api/positions/${closingId}/close`, { method: "POST" });
+    const res = await apiFetch(`/api/positions/${closingId}/close`, { method: "POST" });
     if (res.ok) {
       addLog(`Closed <b>${pos?.market_title.slice(0, 40) ?? closingId}</b> · PnL: ${pos ? fmtPnl(calcPnl(pos)) : "—"}`);
       if (selectedId === closingId) setSelectedId(null);

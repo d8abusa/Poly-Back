@@ -15,8 +15,30 @@ Functions called by other modules:
 import asyncio
 import logging
 import os
+from pathlib import Path
+
+import yaml
 
 log = logging.getLogger(__name__)
+
+# ── Risk config (risk.yml) ─────────────────────────────────────────────────────
+
+def _load_risk_config() -> dict:
+    path = Path(__file__).parent.parent / "config" / "risk.yml"
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except Exception as exc:
+        log.warning("Could not load risk.yml: %s — using defaults", exc)
+        return {}
+
+_RISK_CONFIG: dict = _load_risk_config()
+
+
+def get_config() -> dict:
+    """Return the parsed risk.yml configuration."""
+    return _RISK_CONFIG
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
