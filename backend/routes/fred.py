@@ -453,6 +453,192 @@ async def fred_cube():
     }
 
 
+@router.get("/sunburst")
+async def fred_sunburst():
+    """
+    Hierarchical sunburst of macro stress indicators.
+
+    Indicators are grouped into four categories:
+      Growth       — Yield Spread (T10Y2Y), Real GDP
+      Price        — CPI YoY (CPIAUCSL), Fed Rate (DFEDTARU)
+      Labour       — Unemployment (UNRATE), Nonfarm Payrolls (PAYEMS)
+      Conditions   — Dollar Index (DTWEXBGS)
+
+    Stress score (0–100):
+      100 = maximum historical stress for that indicator
+        0 = minimum / most benign reading
+    Cell area AND colour both encode stress so the most alarming
+    indicators dominate visually. Minimum cell size = 8 so nothing
+    disappears entirely.
+
+    Stress direction per indicator:
+      T10Y2Y   — inverted (low spread = high recession risk)
+      GDP      — inverted (low growth = stress)
+      CPIAUCSL — direct  (high inflation = stress)
+      DFEDTARU — direct  (high rate = tightening stress)
+      UNRATE   — direct  (high unemployment = stress)
+      PAYEMS   — MoM change direction (negative change = stress)
+      DTWEXBGS — direct  (strong dollar = tighter conditions)
+    """
+    RANGES = {
+        "T10Y2Y":   (-3.0,  3.5),
+        "GDP":      ( 0.0,  5.0),   # annualised % growth proxy
+        "CPIAUCSL": ( 0.0,  8.0),   # YoY %
+        "DFEDTARU": ( 0.0, 10.0),
+        "UNRATE":   ( 3.0, 12.0),
+        "PAYEMS":   ( 0.0,  1.0),   # placeholder — MoM direction used instead
+        "DTWEXBGS": (90.0,140.0),
+    }
+
+    HIERARCHY = [
+        ("Growth",     ["T10Y2Y",   "GDP"      ]),
+        ("Price",      ["CPIAUCSL", "DFEDTARU" ]),
+        ("Labour",     ["UNRATE",   "PAYEMS"   ]),
+        ("Conditions", ["DTWEXBGS"             ]),
+    ]
+
+    LABELS = {
+        "T10Y2Y":   "Yield Spread",
+        "GDP":      "Real GDP",
+        "CPIAUCSL": "CPI YoY",
+        "DFEDTARU": "Fed Rate",
+        "UNRATE":   "Unemployment",
+        "PAYEMS":   "Payrolls MoM",
+        "DTWEXBGS": "Dollar Index",
+    }
+
+    INVERT = {"T10Y2Y", "GDP"}   # low reading = high stress for these
+
+    def _norm(value: float, lo: float, hi: float) -> float:
+        return max(0.0, min(100.0, (value - lo) / (hi - lo) * 100.0))
+
+    def _to_monthly(rows: list) -> dict[str, float]:
+        m: dict = {}
+        for r in reversed(rows):
+            m[str(r["obs_date"])[:7]] = float(r["value"])
+        return m
+
+    # ── Compute per-indicator stress scores ─────────────────────────────
+    indicator_data: dict[str, dict] = {}
+
+    for sid, (lo, hi) in RANGES.items():
+        rows = _get_cached(sid)
+        if not rows:
+            indicator_data[sid] = {"stress": 50.0, "raw": None, "norm": None, "note": "no cache"}
+            continue
+
+        raw = _to_monthly(rows)
+        months = sorted(raw.keys())
+
+        if sid == "CPIAUCSL" and len(rows) >= 13 and float(rows[0]["value"]) > 50:
+            # Convert to YoY %
+            if len(months) >= 13:
+                latest_yoy = (raw[months[-1]] - raw[months[-13]]) / raw[months[-13]] * 100.0
+            else:
+                latest_yoy = 0.0
+            norm  = _norm(latest_yoy, lo, hi)
+            stress = norm
+            raw_val = round(latest_yoy, 2)
+
+        elif sid == "GDP":
+            # Use QoQ annualised growth approximation from level
+            if len(months) >= 2:
+                curr, prev = raw[months[-1]], raw[months[-2]]
+                qoq_ann = ((curr / prev) ** 4 - 1) * 100.0
+                norm   = _norm(qoq_ann, lo, hi)
+                stress = 100.0 - norm   # invert: low growth = high stress
+                raw_val = round(qoq_ann, 2)
+            else:
+                norm, stress, raw_val = 50.0, 50.0, None
+
+        elif sid == "PAYEMS":
+            # Stress = direction of MoM change, not level
+            if len(months) >= 2:
+                change = raw[months[-1]] - raw[months[-2]]
+                if change < 0:
+                    stress = 80.0
+                elif change == 0:
+                    stress = 50.0
+                else:
+                    stress = max(5.0, 50.0 - min(change / 100.0, 1.0) * 45.0)
+                raw_val = round(change, 1)
+            else:
+                stress, raw_val = 50.0, None
+            norm = stress
+
+        else:
+            norm = _norm(float(rows[0]["value"]), lo, hi)
+            stress = (100.0 - norm) if sid in INVERT else norm
+            raw_val = round(float(rows[0]["value"]), 3)
+
+        indicator_data[sid] = {
+            "stress": round(max(8.0, stress), 1),   # minimum size = 8
+            "raw":    raw_val,
+            "norm":   round(norm, 1),
+            "note":   "inverted" if sid in INVERT else "direct",
+        }
+
+    # ── Build Plotly sunburst arrays ─────────────────────────────────────
+    # Using branchvalues="remainder" (Plotly default): parent value is the
+    # ADDITIONAL area beyond children. Setting parents to 0 means each
+    # category ring is exactly the sum of its children — no wasted space.
+    ids, labels, parents, values, colors, customdata = [], [], [], [], [], []
+
+    # Root node — value 0 = no extra arc, ring = sum of all children
+    ids.append("root")
+    labels.append("Macro")
+    parents.append("")
+    values.append(0)
+    colors.append(50.0)
+    customdata.append({})
+
+    for category, series_list in HIERARCHY:
+        cat_stresses = [indicator_data[s]["stress"] for s in series_list if s in indicator_data]
+        cat_stress   = round(sum(cat_stresses) / len(cat_stresses), 1) if cat_stresses else 50.0
+        # Category value = 0: no extra arc, its ring equals the sum of its leaf children
+        ids.append(category)
+        labels.append(category)
+        parents.append("root")
+        values.append(0)
+        colors.append(cat_stress)
+        customdata.append({"category": True})
+
+        for sid in series_list:
+            d = indicator_data.get(sid, {"stress": 50.0, "raw": None, "norm": None, "note": ""})
+            label = LABELS.get(sid, sid)
+            raw_display = f"{d['raw']}" if d["raw"] is not None else "no data"
+            ids.append(sid)
+            labels.append(label)
+            parents.append(category)
+            values.append(d["stress"])   # leaf value drives sector area
+            colors.append(d["stress"])
+            customdata.append({
+                "raw":    raw_display,
+                "norm":   d["norm"],
+                "stress": d["stress"],
+                "note":   d["note"],
+            })
+
+    # Overall stress summary
+    leaf_stresses = [indicator_data[sid]["stress"] for _, sids in HIERARCHY for sid in sids]
+    overall = round(sum(leaf_stresses) / len(leaf_stresses), 1) if leaf_stresses else 50.0
+
+    return {
+        "ids":        ids,
+        "labels":     labels,
+        "parents":    parents,
+        "values":     values,
+        "colors":     colors,
+        "customdata": customdata,
+        "overall_stress": overall,
+        "interpretation": (
+            "elevated" if overall > 65 else
+            "moderate" if overall > 40 else
+            "benign"
+        ),
+    }
+
+
 @router.get("/umap")
 async def fred_umap():
     """

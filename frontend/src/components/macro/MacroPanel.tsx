@@ -5,6 +5,7 @@ import SurfacePlot from "./SurfacePlot";
 import CorrelationNetwork from "./CorrelationNetwork";
 import CubeHeatmap from "./CubeHeatmap";
 import UmapScatter from "./UmapScatter";
+import MacroSunburst from "./MacroSunburst";
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ResponsiveContainer, Tooltip, Legend,
@@ -516,23 +517,26 @@ export default function MacroPanel() {
         </div>
       )}
 
-      {/* ── Correlation heatmap ───────────────────────────────────────── */}
-      <CorrelationHeatmap />
+      {/* ── Row 1: Correlation heatmap + Network ─────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <CorrelationHeatmap />
+        <CorrelationNetwork />
+      </div>
 
-      {/* ── Parallel coordinates ──────────────────────────────────────── */}
-      <ParallelCoords />
+      {/* ── Row 2: Parallel coords + Surface ─────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <ParallelCoords />
+        <SurfacePlot />
+      </div>
 
-      {/* ── 3D surface ────────────────────────────────────────────────── */}
-      <SurfacePlot />
-
-      {/* ── Correlation network ───────────────────────────────────────── */}
-      <CorrelationNetwork />
-
-      {/* ── 3D cube heatmap ───────────────────────────────────────────── */}
+      {/* ── 3D cube heatmap — full width (needs horizontal space) ─────── */}
       <CubeHeatmap />
 
-      {/* ── UMAP regime scatter ───────────────────────────────────────── */}
-      <UmapScatter />
+      {/* ── Row 3: UMAP scatter + Sunburst ───────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <UmapScatter />
+        <MacroSunburst />
+      </div>
 
     </div>
   );
