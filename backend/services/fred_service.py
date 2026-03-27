@@ -35,38 +35,44 @@ FRED_BASE = "https://api.stlouisfed.org/fred"
 # Release schedule: how many days after period end before new data arrives.
 # Used to decide if cached data is stale and worth re-pulling.
 _RELEASE_LAG_DAYS: dict[str, int] = {
-    "CPIAUCSL":  16,   # CPI — released ~mid-month for prior month
-    "UNRATE":     5,   # Unemployment — first Friday of month
-    "PAYEMS":     5,   # Nonfarm payrolls — first Friday of month
-    "FEDFUNDS":  10,   # Monthly average, ~10 days after month end
-    "DFEDTARU":   1,   # Daily, 1-day lag
-    "GDP":       30,   # Quarterly, ~30 days after quarter end
-    "T10Y2Y":     1,   # Daily, 1-day lag
-    "DTWEXBGS":   3,   # Dollar index, ~3 days
+    "CPIAUCSL":      16,   # CPI — released ~mid-month for prior month
+    "UNRATE":         5,   # Unemployment — first Friday of month
+    "PAYEMS":         5,   # Nonfarm payrolls — first Friday of month
+    "FEDFUNDS":      10,   # Monthly average, ~10 days after month end
+    "DFEDTARU":       1,   # Daily, 1-day lag
+    "GDP":           30,   # Quarterly, ~30 days after quarter end
+    "T10Y2Y":         1,   # Daily, 1-day lag
+    "DTWEXBGS":       3,   # Dollar index, ~3 days
+    "VIXCLS":         1,   # VIX — daily, 1-day lag
+    "BAMLH0A0HYM2":   1,   # HY credit spread — daily, 1-day lag
 }
 
 # How often (in days) we should re-check for new data
 _REFRESH_DAYS: dict[str, int] = {
-    "CPIAUCSL": 32,    # monthly — check once a month
-    "UNRATE":   32,
-    "PAYEMS":   32,
-    "FEDFUNDS": 32,
-    "DFEDTARU":  7,    # weekly re-check for daily series
-    "GDP":      95,    # quarterly
-    "T10Y2Y":    7,
-    "DTWEXBGS":  7,
+    "CPIAUCSL":      32,    # monthly — check once a month
+    "UNRATE":        32,
+    "PAYEMS":        32,
+    "FEDFUNDS":      32,
+    "DFEDTARU":       7,    # weekly re-check for daily series
+    "GDP":           95,    # quarterly
+    "T10Y2Y":         7,
+    "DTWEXBGS":       7,
+    "VIXCLS":         7,    # weekly re-check for daily series
+    "BAMLH0A0HYM2":   7,
 }
 
 # Human-readable labels
 SERIES_META: dict[str, dict] = {
-    "CPIAUCSL":  {"name": "CPI — All Urban Consumers",       "units": "Index 1982-84=100", "freq": "Monthly"},
-    "UNRATE":    {"name": "Unemployment Rate",                "units": "Percent",            "freq": "Monthly"},
-    "PAYEMS":    {"name": "Nonfarm Payrolls",                 "units": "Thousands",          "freq": "Monthly"},
-    "FEDFUNDS":  {"name": "Fed Funds Rate (monthly avg)",     "units": "Percent",            "freq": "Monthly"},
-    "DFEDTARU":  {"name": "Fed Funds Target Upper Bound",     "units": "Percent",            "freq": "Daily"},
-    "GDP":       {"name": "Real GDP",                         "units": "Billions USD",       "freq": "Quarterly"},
-    "T10Y2Y":    {"name": "10Y-2Y Treasury Spread",           "units": "Percent",            "freq": "Daily"},
-    "DTWEXBGS":  {"name": "US Dollar Index (Broad)",          "units": "Index Jan 2006=100", "freq": "Daily"},
+    "CPIAUCSL":      {"name": "CPI — All Urban Consumers",          "units": "Index 1982-84=100",  "freq": "Monthly"},
+    "UNRATE":        {"name": "Unemployment Rate",                   "units": "Percent",             "freq": "Monthly"},
+    "PAYEMS":        {"name": "Nonfarm Payrolls",                    "units": "Thousands",           "freq": "Monthly"},
+    "FEDFUNDS":      {"name": "Fed Funds Rate (monthly avg)",        "units": "Percent",             "freq": "Monthly"},
+    "DFEDTARU":      {"name": "Fed Funds Target Upper Bound",        "units": "Percent",             "freq": "Daily"},
+    "GDP":           {"name": "Real GDP",                            "units": "Billions USD",        "freq": "Quarterly"},
+    "T10Y2Y":        {"name": "10Y-2Y Treasury Spread",              "units": "Percent",             "freq": "Daily"},
+    "DTWEXBGS":      {"name": "US Dollar Index (Broad)",             "units": "Index Jan 2006=100",  "freq": "Daily"},
+    "VIXCLS":        {"name": "CBOE Volatility Index (VIX)",         "units": "Index",               "freq": "Daily"},
+    "BAMLH0A0HYM2":  {"name": "US HY Option-Adjusted Spread",        "units": "Percent",             "freq": "Daily"},
 }
 
 

@@ -75,19 +75,23 @@ async def fred_radar():
     # Long-run ranges: (min, max) used for 0–100 normalisation.
     # CPI is expressed as YoY % change (converted below).
     RANGES = {
-        "T10Y2Y":   (-3.0,  3.5),   # yield spread %
-        "DFEDTARU": ( 0.0, 10.0),   # Fed target rate %
-        "CPIAUCSL": ( 0.0,  8.0),   # YoY % change
-        "UNRATE":   ( 3.0, 12.0),   # unemployment %
-        "DTWEXBGS": (90.0,140.0),   # dollar index
+        "T10Y2Y":       (-3.0,  3.5),   # yield spread %
+        "DFEDTARU":     ( 0.0, 10.0),   # Fed target rate %
+        "CPIAUCSL":     ( 0.0,  8.0),   # YoY % change
+        "UNRATE":       ( 3.0, 12.0),   # unemployment %
+        "DTWEXBGS":     (90.0,140.0),   # dollar index
+        "VIXCLS":       ( 8.0, 50.0),   # VIX: calm=8, crisis=50
+        "BAMLH0A0HYM2": ( 1.5,  9.0),  # HY OAS %: tight=1.5, distress=9
     }
 
     LABELS = {
-        "T10Y2Y":   "Yield Spread",
-        "DFEDTARU": "Fed Rate",
-        "CPIAUCSL": "CPI YoY",
-        "UNRATE":   "Unemployment",
-        "DTWEXBGS": "Dollar Index",
+        "T10Y2Y":       "Yield Spread",
+        "DFEDTARU":     "Fed Rate",
+        "CPIAUCSL":     "CPI YoY",
+        "UNRATE":       "Unemployment",
+        "DTWEXBGS":     "Dollar Index",
+        "VIXCLS":       "VIX",
+        "BAMLH0A0HYM2": "HY Spread",
     }
 
     # Invert these so that "higher score = more stress / tighter conditions"
@@ -147,11 +151,13 @@ async def fred_parallel():
     (dark = old, bright = recent) to reveal regime transitions.
     """
     SERIES_CONFIG = [
-        ("T10Y2Y",   "Yield Spread",  -3.0,   3.5),
-        ("DFEDTARU", "Fed Rate",       0.0,  10.0),
-        ("CPIAUCSL", "CPI YoY %",      0.0,   8.0),
-        ("UNRATE",   "Unemployment",   3.0,  12.0),
-        ("DTWEXBGS", "Dollar Index",  90.0, 140.0),
+        ("T10Y2Y",       "Yield Spread",  -3.0,   3.5),
+        ("DFEDTARU",     "Fed Rate",       0.0,  10.0),
+        ("CPIAUCSL",     "CPI YoY %",      0.0,   8.0),
+        ("UNRATE",       "Unemployment",   3.0,  12.0),
+        ("DTWEXBGS",     "Dollar Index",  90.0, 140.0),
+        ("VIXCLS",       "VIX",            8.0,  50.0),
+        ("BAMLH0A0HYM2", "HY Spread",      1.5,   9.0),
     ]
 
     def _norm(value: float, lo: float, hi: float) -> float:
@@ -220,14 +226,16 @@ async def fred_correlation():
     """
     import math
 
-    SERIES = ["T10Y2Y", "DFEDTARU", "CPIAUCSL", "UNRATE", "DTWEXBGS", "GDP"]
+    SERIES = ["T10Y2Y", "DFEDTARU", "CPIAUCSL", "UNRATE", "DTWEXBGS", "GDP", "VIXCLS", "BAMLH0A0HYM2"]
     LABELS = {
-        "T10Y2Y":   "Yield Spread",
-        "DFEDTARU": "Fed Rate",
-        "CPIAUCSL": "CPI Index",
-        "UNRATE":   "Unemployment",
-        "DTWEXBGS": "Dollar Index",
-        "GDP":      "Real GDP",
+        "T10Y2Y":       "Yield Spread",
+        "DFEDTARU":     "Fed Rate",
+        "CPIAUCSL":     "CPI Index",
+        "UNRATE":       "Unemployment",
+        "DTWEXBGS":     "Dollar Index",
+        "GDP":          "Real GDP",
+        "VIXCLS":       "VIX",
+        "BAMLH0A0HYM2": "HY Spread",
     }
 
     def _pearson(xs: list[float], ys: list[float]) -> float | None:
@@ -462,7 +470,7 @@ async def fred_sunburst():
       Growth       — Yield Spread (T10Y2Y), Real GDP
       Price        — CPI YoY (CPIAUCSL), Fed Rate (DFEDTARU)
       Labour       — Unemployment (UNRATE), Nonfarm Payrolls (PAYEMS)
-      Conditions   — Dollar Index (DTWEXBGS)
+      Conditions   — Dollar Index (DTWEXBGS), VIX (VIXCLS), HY Spread (BAMLH0A0HYM2)
 
     Stress score (0–100):
       100 = maximum historical stress for that indicator
@@ -472,39 +480,45 @@ async def fred_sunburst():
     disappears entirely.
 
     Stress direction per indicator:
-      T10Y2Y   — inverted (low spread = high recession risk)
-      GDP      — inverted (low growth = stress)
-      CPIAUCSL — direct  (high inflation = stress)
-      DFEDTARU — direct  (high rate = tightening stress)
-      UNRATE   — direct  (high unemployment = stress)
-      PAYEMS   — MoM change direction (negative change = stress)
-      DTWEXBGS — direct  (strong dollar = tighter conditions)
+      T10Y2Y        — inverted (low spread = high recession risk)
+      GDP           — inverted (low growth = stress)
+      CPIAUCSL      — direct  (high inflation = stress)
+      DFEDTARU      — direct  (high rate = tightening stress)
+      UNRATE        — direct  (high unemployment = stress)
+      PAYEMS        — MoM change direction (negative change = stress)
+      DTWEXBGS      — direct  (strong dollar = tighter conditions)
+      VIXCLS        — direct  (high VIX = high fear)
+      BAMLH0A0HYM2  — direct  (wide credit spread = distress)
     """
     RANGES = {
-        "T10Y2Y":   (-3.0,  3.5),
-        "GDP":      ( 0.0,  5.0),   # annualised % growth proxy
-        "CPIAUCSL": ( 0.0,  8.0),   # YoY %
-        "DFEDTARU": ( 0.0, 10.0),
-        "UNRATE":   ( 3.0, 12.0),
-        "PAYEMS":   ( 0.0,  1.0),   # placeholder — MoM direction used instead
-        "DTWEXBGS": (90.0,140.0),
+        "T10Y2Y":        (-3.0,  3.5),
+        "GDP":           ( 0.0,  5.0),   # annualised % growth proxy
+        "CPIAUCSL":      ( 0.0,  8.0),   # YoY %
+        "DFEDTARU":      ( 0.0, 10.0),
+        "UNRATE":        ( 3.0, 12.0),
+        "PAYEMS":        ( 0.0,  1.0),   # placeholder — MoM direction used instead
+        "DTWEXBGS":      (90.0,140.0),
+        "VIXCLS":        ( 8.0, 50.0),   # VIX: 8 = calm, 50 = crisis
+        "BAMLH0A0HYM2":  ( 1.5,  9.0),  # HY OAS %: 1.5 = tight, 9 = distress
     }
 
     HIERARCHY = [
-        ("Growth",     ["T10Y2Y",   "GDP"      ]),
-        ("Price",      ["CPIAUCSL", "DFEDTARU" ]),
-        ("Labour",     ["UNRATE",   "PAYEMS"   ]),
-        ("Conditions", ["DTWEXBGS"             ]),
+        ("Growth",     ["T10Y2Y",   "GDP"                        ]),
+        ("Price",      ["CPIAUCSL", "DFEDTARU"                   ]),
+        ("Labour",     ["UNRATE",   "PAYEMS"                     ]),
+        ("Conditions", ["DTWEXBGS", "VIXCLS", "BAMLH0A0HYM2"    ]),
     ]
 
     LABELS = {
-        "T10Y2Y":   "Yield Spread",
-        "GDP":      "Real GDP",
-        "CPIAUCSL": "CPI YoY",
-        "DFEDTARU": "Fed Rate",
-        "UNRATE":   "Unemployment",
-        "PAYEMS":   "Payrolls MoM",
-        "DTWEXBGS": "Dollar Index",
+        "T10Y2Y":       "Yield Spread",
+        "GDP":          "Real GDP",
+        "CPIAUCSL":     "CPI YoY",
+        "DFEDTARU":     "Fed Rate",
+        "UNRATE":       "Unemployment",
+        "PAYEMS":       "Payrolls MoM",
+        "DTWEXBGS":     "Dollar Index",
+        "VIXCLS":       "VIX",
+        "BAMLH0A0HYM2": "HY Spread",
     }
 
     INVERT = {"T10Y2Y", "GDP"}   # low reading = high stress for these
@@ -658,11 +672,13 @@ async def fred_umap():
     import numpy as np
 
     SERIES_CONFIG = [
-        ("T10Y2Y",   "Yield Spread",  -3.0,   3.5),
-        ("DFEDTARU", "Fed Rate",       0.0,  10.0),
-        ("CPIAUCSL", "CPI YoY %",      0.0,   8.0),
-        ("UNRATE",   "Unemployment",   3.0,  12.0),
-        ("DTWEXBGS", "Dollar Index",  90.0, 140.0),
+        ("T10Y2Y",       "Yield Spread",  -3.0,   3.5),
+        ("DFEDTARU",     "Fed Rate",       0.0,  10.0),
+        ("CPIAUCSL",     "CPI YoY %",      0.0,   8.0),
+        ("UNRATE",       "Unemployment",   3.0,  12.0),
+        ("DTWEXBGS",     "Dollar Index",  90.0, 140.0),
+        ("VIXCLS",       "VIX",            8.0,  50.0),
+        ("BAMLH0A0HYM2", "HY Spread",      1.5,   9.0),
     ]
 
     def _norm(value: float, lo: float, hi: float) -> float:
@@ -765,14 +781,16 @@ async def fred_network():
     """
     import math
 
-    SERIES = ["T10Y2Y", "DFEDTARU", "CPIAUCSL", "UNRATE", "DTWEXBGS", "GDP"]
+    SERIES = ["T10Y2Y", "DFEDTARU", "CPIAUCSL", "UNRATE", "DTWEXBGS", "GDP", "VIXCLS", "BAMLH0A0HYM2"]
     LABELS = {
-        "T10Y2Y":   "Yield Spread",
-        "DFEDTARU": "Fed Rate",
-        "CPIAUCSL": "CPI Index",
-        "UNRATE":   "Unemployment",
-        "DTWEXBGS": "Dollar Index",
-        "GDP":      "Real GDP",
+        "T10Y2Y":       "Yield Spread",
+        "DFEDTARU":     "Fed Rate",
+        "CPIAUCSL":     "CPI Index",
+        "UNRATE":       "Unemployment",
+        "DTWEXBGS":     "Dollar Index",
+        "GDP":          "Real GDP",
+        "VIXCLS":       "VIX",
+        "BAMLH0A0HYM2": "HY Spread",
     }
     THRESHOLD = 0.15   # minimum |r| to draw an edge
 

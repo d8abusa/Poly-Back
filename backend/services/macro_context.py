@@ -12,6 +12,8 @@ Regime signals
   inflation_trend  rising | falling | stable    (CPI 3-month momentum)
   labor_market     strong | weakening | weak    (UNRATE level)
   dollar_trend     strengthening | weakening | neutral (DTWEXBGS YoY)
+  market_fear      low | normal | elevated | high (VIXCLS level)
+  credit_stress    tight | moderate | elevated | distress (BAMLH0A0HYM2 level)
 
 Strategy modifiers (applied automatically by the backtest engine)
 ------------------------------------------------------------------
@@ -36,18 +38,22 @@ class MacroContext:
     inflation_trend:  str    # "rising" | "falling" | "stable" | "unknown"
     labor_market:     str    # "strong" | "weakening" | "weak" | "unknown"
     dollar_trend:     str    # "strengthening" | "weakening" | "neutral"
+    market_fear:      str    # "low" | "normal" | "elevated" | "high" | "unknown"
+    credit_stress:    str    # "tight" | "moderate" | "elevated" | "distress" | "unknown"
 
     # Raw latest values
     yield_spread:  Optional[float]   # T10Y2Y (pct)
     fed_rate:      Optional[float]   # DFEDTARU (pct)
     cpi_yoy:       Optional[float]   # YoY CPI change (pct)
     unemployment:  Optional[float]   # UNRATE (pct)
+    vix:           Optional[float]   # VIXCLS
+    credit_spread: Optional[float]   # BAMLH0A0HYM2 (pct)
 
     # Strategy modifiers
     zscore_multiplier: float   # >= 1.0 — widen z_entry in uncertain regimes
     kelly_caution:     float   # 0 < x <= 1.0 — reduce kelly_fraction in risky regimes
 
-    # Normalised feature vector for XGBoost (5 values, scaled to ~[-1, +1])
+    # Normalised feature vector for XGBoost (7 values, scaled to ~[-1, +1])
     features: list = field(default_factory=list)
 
     # Meta
@@ -79,6 +85,8 @@ def get_macro_context() -> MacroContext:
     cpi      = _get_cached("CPIAUCSL")
     unrate   = _get_cached("UNRATE")
     dtwexbgs = _get_cached("DTWEXBGS")
+    vixcls   = _get_cached("VIXCLS")
+    baml     = _get_cached("BAMLH0A0HYM2")
 
     has_data = bool(t10y2y or dfedtaru or cpi or unrate)
     if not has_data:
@@ -86,9 +94,11 @@ def get_macro_context() -> MacroContext:
             recession_risk="unknown", fed_stance="unknown",
             inflation_level="unknown", inflation_trend="unknown",
             labor_market="unknown", dollar_trend="neutral",
+            market_fear="unknown", credit_stress="unknown",
             yield_spread=None, fed_rate=None, cpi_yoy=None, unemployment=None,
+            vix=None, credit_spread=None,
             zscore_multiplier=1.0, kelly_caution=1.0,
-            features=[0.0] * 5,
+            features=[0.0] * 7,
             has_data=False, data_quality="none",
         )
 
@@ -195,42 +205,82 @@ def get_macro_context() -> MacroContext:
         else:
             dollar_trend = "neutral"
 
+    # ── Market fear (VIX) ─────────────────────────────────────────────────────
+    vix = _latest(vixcls)
+    if vix is None:
+        market_fear = "unknown"
+    elif vix < 15:
+        market_fear = "low"
+    elif vix < 25:
+        market_fear = "normal"
+    elif vix < 35:
+        market_fear = "elevated"
+    else:
+        market_fear = "high"
+
+    # ── Credit stress (HY OAS) ────────────────────────────────────────────────
+    credit_spread = _latest(baml)
+    if credit_spread is None:
+        credit_stress = "unknown"
+    elif credit_spread < 3.0:
+        credit_stress = "tight"
+    elif credit_spread < 5.0:
+        credit_stress = "moderate"
+    elif credit_spread < 7.0:
+        credit_stress = "elevated"
+    else:
+        credit_stress = "distress"
+
     # ── Strategy modifiers ────────────────────────────────────────────────────
 
     # Z-score: widen entry threshold in uncertain macro environments so we
     # don't mistake regime shifts for reversion opportunities.
-    if recession_risk == "high":
-        zscore_multiplier = 1.35
-    elif recession_risk == "medium":
+    # VIX "high" adds further widening — market dislocation can break mean-reversion.
+    if recession_risk == "high" or market_fear == "high":
+        zscore_multiplier = 1.40
+    elif recession_risk == "medium" or market_fear == "elevated":
+        zscore_multiplier = 1.20
+    elif credit_stress in ("elevated", "distress"):
         zscore_multiplier = 1.15
     else:
         zscore_multiplier = 1.0
 
-    # Kelly caution: reduce sizing when macro is unsettled
+    # Kelly caution: reduce sizing when macro is unsettled.
+    # Worst-case: recession risk + credit distress → floor at 0.55.
     kelly_caution = 1.0
-    if recession_risk == "high":
-        kelly_caution = 0.70
+    if recession_risk == "high" and credit_stress in ("elevated", "distress"):
+        kelly_caution = 0.55
+    elif recession_risk == "high" or market_fear == "high":
+        kelly_caution = 0.65
+    elif credit_stress == "distress":
+        kelly_caution = 0.65
     elif inflation_level == "above_target" and fed_stance == "tightening":
         kelly_caution = 0.75
-    elif fed_stance == "easing" and recession_risk == "low":
+    elif market_fear == "elevated" or credit_stress == "elevated":
+        kelly_caution = 0.80
+    elif fed_stance == "easing" and recession_risk == "low" and market_fear in ("low", "normal"):
         kelly_caution = 1.0   # benign environment — no caution
 
     # ── Normalised XGBoost features ───────────────────────────────────────────
-    # 5 features, each scaled to roughly [-1, +1] so they blend with probability features
-    f_spread  = (spread / 2.0)               if spread      is not None else 0.0
-    f_rate    = ((fed_rate - 3.0) / 4.0)     if fed_rate    is not None else 0.0
-    f_cpi     = ((cpi_yoy - 2.5) / 3.0)      if cpi_yoy     is not None else 0.0
-    f_ur      = ((ur - 4.0) / 2.0)           if ur          is not None else 0.0
+    # 7 features, each scaled to roughly [-1, +1] so they blend with probability features
+    f_spread  = (spread / 2.0)               if spread        is not None else 0.0
+    f_rate    = ((fed_rate - 3.0) / 4.0)     if fed_rate      is not None else 0.0
+    f_cpi     = ((cpi_yoy - 2.5) / 3.0)      if cpi_yoy       is not None else 0.0
+    f_ur      = ((ur - 4.0) / 2.0)           if ur            is not None else 0.0
     f_dollar  = 0.0
     if dollar_latest is not None and dollar_1yr is not None and dollar_1yr > 0:
         f_dollar = ((dollar_latest - dollar_1yr) / dollar_1yr * 100) / 5.0
-    features = [f_spread, f_rate, f_cpi, f_ur, f_dollar]
+    # VIX centred on 20 (historical median), scaled by 15
+    f_vix     = ((vix - 20.0) / 15.0)        if vix           is not None else 0.0
+    # HY spread centred on 4% (historical avg), scaled by 3
+    f_credit  = ((credit_spread - 4.0) / 3.0) if credit_spread is not None else 0.0
+    features = [f_spread, f_rate, f_cpi, f_ur, f_dollar, f_vix, f_credit]
 
     partial = sum(
-        1 for v in [spread, fed_rate, cpi_yoy, ur, dollar_latest]
+        1 for v in [spread, fed_rate, cpi_yoy, ur, dollar_latest, vix, credit_spread]
         if v is not None
     )
-    data_quality = "full" if partial == 5 else ("partial" if partial > 0 else "none")
+    data_quality = "full" if partial == 7 else ("partial" if partial > 0 else "none")
 
     return MacroContext(
         recession_risk=recession_risk,
@@ -239,10 +289,14 @@ def get_macro_context() -> MacroContext:
         inflation_trend=inflation_trend,
         labor_market=labor_market,
         dollar_trend=dollar_trend,
+        market_fear=market_fear,
+        credit_stress=credit_stress,
         yield_spread=spread,
         fed_rate=fed_rate,
         cpi_yoy=cpi_yoy,
         unemployment=unemployment,
+        vix=vix,
+        credit_spread=credit_spread,
         zscore_multiplier=zscore_multiplier,
         kelly_caution=kelly_caution,
         features=features,
@@ -261,12 +315,16 @@ def macro_context_as_dict(ctx: MacroContext) -> dict:
             "inflation_trend": ctx.inflation_trend,
             "labor_market":    ctx.labor_market,
             "dollar_trend":    ctx.dollar_trend,
+            "market_fear":     ctx.market_fear,
+            "credit_stress":   ctx.credit_stress,
         },
         "values": {
-            "yield_spread": ctx.yield_spread,
-            "fed_rate":     ctx.fed_rate,
-            "cpi_yoy":      ctx.cpi_yoy,
-            "unemployment": ctx.unemployment,
+            "yield_spread":  ctx.yield_spread,
+            "fed_rate":      ctx.fed_rate,
+            "cpi_yoy":       ctx.cpi_yoy,
+            "unemployment":  ctx.unemployment,
+            "vix":           ctx.vix,
+            "credit_spread": ctx.credit_spread,
         },
         "strategy_modifiers": {
             "zscore_multiplier": ctx.zscore_multiplier,

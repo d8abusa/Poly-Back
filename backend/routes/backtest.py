@@ -36,6 +36,8 @@ def _inject_macro(req: BacktestRequest, market_title: str = "") -> BacktestReque
             "macro_recession_risk": ctx.recession_risk,
             "macro_fed_stance":     ctx.fed_stance,
             "macro_inflation":      ctx.inflation_level,
+            "macro_market_fear":    ctx.market_fear,
+            "macro_credit_stress":  ctx.credit_stress,
         })
         log.debug(
             "macro context: recession=%s fed=%s inflation=%s zscore_mult=%.2f kelly_caution=%.2f",

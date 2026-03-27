@@ -165,6 +165,10 @@ class BacktestRequest(BaseModel):
                             description="Regime label: easing|neutral|tightening|unknown")
     macro_inflation:      str = Field("unknown",
                             description="Regime label: below_target|at_target|above_target|unknown")
+    macro_market_fear:    str = Field("unknown",
+                            description="Regime label: low|normal|elevated|high|unknown")
+    macro_credit_stress:  str = Field("unknown",
+                            description="Regime label: tight|moderate|elevated|distress|unknown")
 
 
 class BatchMarketInput(BaseModel):

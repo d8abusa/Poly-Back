@@ -1019,23 +1019,34 @@ class PredictionMarketBacktester:
         they use macro_zscore_mult and macro_kelly_caution directly instead.
 
         Rules (applied in order, first match wins):
+          recession_risk=high + credit=distress        → block all new longs
           recession_risk=high                          → block all new longs
+          market_fear=high                             → block all new longs
           recession_risk=medium + tightening Fed       → allow, size ×0.50
           recession_risk=medium                        → allow, size ×0.65
+          credit_stress=distress                       → allow, size ×0.55
           tightening + above_target inflation          → allow, size ×0.70
           tightening                                   → allow, size ×0.85
           above_target inflation + rising trend        → allow, size ×0.80
+          market_fear=elevated                         → allow, size ×0.75
+          credit_stress=elevated                       → allow, size ×0.80
           everything else (benign)                     → allow, size ×1.00
         """
         if not self._is_stock:
             return True, 1.0
 
-        recession = getattr(self.req, "macro_recession_risk", "unknown")
-        fed       = getattr(self.req, "macro_fed_stance",     "unknown")
-        inflation = getattr(self.req, "macro_inflation",      "unknown")
+        recession     = getattr(self.req, "macro_recession_risk", "unknown")
+        fed           = getattr(self.req, "macro_fed_stance",     "unknown")
+        inflation     = getattr(self.req, "macro_inflation",      "unknown")
+        market_fear   = getattr(self.req, "macro_market_fear",    "unknown")
+        credit_stress = getattr(self.req, "macro_credit_stress",  "unknown")
 
         if recession == "high":
             return False, 0.0
+        if market_fear == "high":
+            return False, 0.0
+        if credit_stress == "distress":
+            return True, 0.55
         if recession == "medium" and fed == "tightening":
             return True, 0.50
         if recession == "medium":
@@ -1045,6 +1056,10 @@ class PredictionMarketBacktester:
         if fed == "tightening":
             return True, 0.85
         if inflation == "above_target":
+            return True, 0.80
+        if market_fear == "elevated":
+            return True, 0.75
+        if credit_stress == "elevated":
             return True, 0.80
         return True, 1.0
 
