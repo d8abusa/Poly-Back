@@ -142,7 +142,7 @@ class PredictionMarketBacktester:
             return self._wizard(history)
 
         for pt in history:
-            prob = float(pt["p"])
+            prob = max(0.0, min(1.0, float(pt["p"])))   # clamp: guard against NaN/out-of-range ticks
             date = self._ts_to_date(int(pt["t"]))
             self._tick_idx += 1
 
@@ -196,16 +196,21 @@ class PredictionMarketBacktester:
         daily_ret = equity_series.pct_change().dropna()
         ann_factor = self._annualization_factor(history)
 
+        def _safe(v: float, decimals: int = 4) -> float:
+            """Replace NaN/Inf with 0.0 before serialisation."""
+            import math
+            return round(v, decimals) if math.isfinite(v) else 0.0
+
         return BacktestResult(
             success=True,
             condition_id=self.req.condition_id,
             initial_capital=self.req.initial_capital,
-            final_value=round(self.cash, 4),
-            total_return=round((self.cash - self.req.initial_capital) / self.req.initial_capital * 100, 2),
-            sharpe_ratio=round(self._sharpe(daily_ret, ann_factor=ann_factor), 3),
-            max_drawdown=round(self._max_drawdown(equity_series) * 100, 2),
+            final_value=_safe(self.cash, 4),
+            total_return=_safe((self.cash - self.req.initial_capital) / self.req.initial_capital * 100, 2),
+            sharpe_ratio=_safe(self._sharpe(daily_ret, ann_factor=ann_factor), 3),
+            max_drawdown=_safe(self._max_drawdown(equity_series) * 100, 2),
             total_trades=len(self.trades),
-            win_rate=round(self._win_rate() * 100, 2),
+            win_rate=_safe(self._win_rate() * 100, 2),
             equity_curve=self.equity_curve,
             trades=self.trades,
         )

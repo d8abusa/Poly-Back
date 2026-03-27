@@ -12,6 +12,7 @@ from backend.services.drawdown_monitor import drawdown_monitor
 from backend.services.alert_monitor import run_alert_monitor
 from backend.services.fred_scheduler import run_fred_scheduler, _trigger_once as fred_trigger_once
 from backend.services.job_registry import registry
+from backend.services.db import close_pool
 from backend.routes.ops import register_trigger
 from backend.middleware.auth import require_auth
 
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
     except asyncio.CancelledError:
         pass
+    close_pool()
 
 
 app = FastAPI(

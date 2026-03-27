@@ -16,19 +16,53 @@ from typing import Iterator
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://polyback:Willowcr3st@localhost:5432/polyback_db")
 
+# Simple thread-safe connection pool (min=1, max=10).
+# Reuses idle connections and enforces a max lifetime so stale
+# connections are recycled before Postgres server-side timeout kills them.
+try:
+    from psycopg2 import pool as _pg_pool
+    _pool = _pg_pool.ThreadedConnectionPool(
+        minconn=1, maxconn=10,
+        dsn=DATABASE_URL,
+    )
+except Exception:
+    _pool = None   # fallback: open a fresh connection each time
+
+
+def close_pool() -> None:
+    """Call on application shutdown to release all pooled connections."""
+    global _pool
+    if _pool is not None:
+        _pool.closeall()
+        _pool = None
+
 
 @contextmanager
 def get_conn():
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = False
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    if _pool is not None:
+        conn = _pool.getconn()
+        conn.autocommit = False
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            if _pool is not None:
+                _pool.putconn(conn)
+    else:
+        # Fallback: plain connection (no pool)
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = False
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 def asset_type_from_exchange(exchange: str) -> str:
