@@ -9,8 +9,17 @@ import logging
 from typing import Optional
 
 from ..services.watchlist_service import check_triggers
+from .job_registry import registry
 
 log = logging.getLogger(__name__)
+
+_JOB = "alert_monitor"
+registry.register(
+    name=_JOB,
+    description="Polls watchlist markets for price-trigger alerts every 10s",
+    category="alert",
+    interval_seconds=10,
+)
 
 
 async def check_watchlist_alerts() -> None:
@@ -62,12 +71,13 @@ async def run_alert_monitor() -> None:
     await asyncio.sleep(5)  # Initial delay
 
     while True:
-        try:
-            await check_watchlist_alerts()
-            await asyncio.sleep(10)
-        except asyncio.CancelledError:
-            log.info("Alert monitor shutting down")
-            raise
-        except Exception as exc:
-            log.error("Alert monitor error: %s", exc)
-            await asyncio.sleep(10)
+        if registry.is_enabled(_JOB):
+            try:
+                async with registry.run_context(_JOB):
+                    await check_watchlist_alerts()
+            except asyncio.CancelledError:
+                log.info("Alert monitor shutting down")
+                raise
+            except Exception as exc:
+                log.error("Alert monitor error: %s", exc)
+        await asyncio.sleep(10)

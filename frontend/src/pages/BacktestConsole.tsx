@@ -19,6 +19,7 @@ import StrategyDetailPanel from "../components/shared/StrategyDetailPanel";
 import SettingsPanel from "../components/shared/SettingsPanel";
 import Watchlist from "../components/watchlist/Watchlist";
 import MacroPanel from "../components/macro/MacroPanel";
+import OpsPanel from "../components/ops/OpsPanel";
 import { apiFetch, clearToken } from "../lib/apiFetch";
 
 // ── BacktestConsole — owns ALL shared state ────────────────────────────────────
@@ -60,7 +61,7 @@ export default function BacktestConsole() {
   // ── Capital + execution mode + view ──────────────────────────────────────────
   const [capital, setCapital] = useState<number>(0);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("confirm");
-  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed" | "runs" | "watchlist" | "macro">("backtest");
+  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed" | "runs" | "watchlist" | "macro" | "ops">("backtest");
 
   // ── Toast ────────────────────────────────────────────────────────────────────
   const [toastMsg, setToastMsg] = useState("");
@@ -397,11 +398,11 @@ export default function BacktestConsole() {
               </span>
             )}
             {/* View nav */}
-            {(["backtest", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist", "macro"] as const).map(v => {
+            {(["backtest", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist", "macro", "ops"] as const).map(v => {
               const labels: Record<string, string> = {
                 backtest: "Backtest", signals: "Signals", positions: "Positions",
                 history: "Trade History", strategies: "Strategies", feed: "Feed", runs: "Runs", watchlist: "Watchlist",
-                macro: "Macro",
+                macro: "Macro", ops: "Ops",
               };
               const active = view === v;
               return (
@@ -575,6 +576,10 @@ export default function BacktestConsole() {
         ) : view === "macro" ? (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
             <MacroPanel />
+          </div>
+        ) : view === "ops" ? (
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <OpsPanel />
           </div>
         ) : (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>

@@ -20,10 +20,19 @@ from .exchange_router import get_exchange_client
 from . import position_tracker as pt
 from . import alert_service as alerts
 from . import risk_manager as risk
+from .job_registry import registry
 
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL = int(os.getenv("STOP_LOSS_POLL_INTERVAL", "30"))  # seconds
+
+_JOB = "stop_loss_executor"
+registry.register(
+    name=_JOB,
+    description="Monitors open positions for stop-loss / exit-target breaches every 30s",
+    category="risk",
+    interval_seconds=POLL_INTERVAL,
+)
 
 
 async def _check_positions() -> None:
@@ -126,12 +135,17 @@ async def run_stop_loss_loop() -> None:
     enabled = os.getenv("STOP_LOSS_ENABLED", "true").lower() not in ("false", "0", "no")
     if not enabled:
         log.info("Stop-loss executor disabled via STOP_LOSS_ENABLED env var")
+        registry.set_enabled(_JOB, False)
         return
 
     log.info("Stop-loss executor started (poll interval: %ds)", POLL_INTERVAL)
     while True:
-        try:
-            await _check_positions()
-        except Exception as exc:
-            log.error("stop-loss loop error: %s", exc)
+        if registry.is_enabled(_JOB):
+            try:
+                async with registry.run_context(_JOB):
+                    await _check_positions()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error("stop-loss loop error: %s", exc)
         await asyncio.sleep(POLL_INTERVAL)
