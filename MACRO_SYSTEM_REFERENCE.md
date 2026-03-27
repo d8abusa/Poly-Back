@@ -363,11 +363,9 @@ All routes require `Authorization: Bearer <token>` except `/api/auth/login`.
 
 ## 10. Known Limitations and Edge Cases
 
-### Fed Stance Uses Daily Lookback, Not Monthly
+### Fed Stance — Monthly Resampling
 
-`DFEDTARU` is a daily series. The fed stance comparison uses `n_ago(rows, 12)` — which for a daily series is 12 *days*, not 12 *months*. This means the stance label is highly reactive. A single Fed meeting that holds rates will read as "neutral" even mid-cycle. If `DFEDTARU` is unavailable, the fallback is `FEDFUNDS` (monthly), which uses a true 12-month lookback.
-
-**Workaround:** The UMAP scatter and parallel coordinates charts implicitly smooth this by showing the full month-resampled time series, which gives a more stable regime picture than the point-in-time label.
+`DFEDTARU` is a daily series. The fed stance comparison resamples it to monthly buckets (last observation per month) before comparing current to 12 months ago, giving a true 12-month policy cycle comparison. If `DFEDTARU` is unavailable, the fallback is `FEDFUNDS` (already monthly), which uses direct index lookback.
 
 ### Correlation Network Edge Threshold
 

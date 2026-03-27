@@ -104,11 +104,27 @@ def get_macro_context() -> MacroContext:
         recession_risk = "low"
 
     # ── Fed stance ────────────────────────────────────────────────────────────
-    # Prefer daily DFEDTARU; fall back to monthly FEDFUNDS
-    rate_rows = dfedtaru if dfedtaru else fedfunds
-    fed_rate  = _latest(rate_rows)
-    # Compare to ~12 periods back (12 months for monthly; ~12 weeks for daily)
-    fed_rate_prior = _n_ago(rate_rows, 12) if rate_rows else None
+    # Prefer daily DFEDTARU resampled to monthly; fall back to monthly FEDFUNDS.
+    # Resampling to monthly before the 12-period lookback gives a true 12-month
+    # comparison regardless of whether the source series is daily or monthly.
+    fed_rate = None
+    fed_rate_prior = None
+
+    if dfedtaru:
+        # Collapse daily rows to monthly buckets (last observation per month)
+        monthly_rates: dict[str, float] = {}
+        for r in reversed(dfedtaru):          # oldest-first so last write wins
+            month = str(r["obs_date"])[:7]
+            monthly_rates[month] = float(r["value"])
+        monthly_sorted = sorted(monthly_rates.keys(), reverse=True)  # newest-first
+        if monthly_sorted:
+            fed_rate = monthly_rates[monthly_sorted[0]]
+            if len(monthly_sorted) > 12:
+                fed_rate_prior = monthly_rates[monthly_sorted[12]]
+    elif fedfunds:
+        # FEDFUNDS is already monthly — direct index lookup is correct
+        fed_rate       = _latest(fedfunds)
+        fed_rate_prior = _n_ago(fedfunds, 12)
 
     if fed_rate is None or fed_rate_prior is None:
         fed_stance = "neutral"
