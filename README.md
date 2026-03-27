@@ -2,8 +2,9 @@
 
 A full-stack research and live-execution platform for prediction markets and equities. Backtest 10+ strategies against historical data, monitor macro regime signals from FRED, stage signals, and route live orders to Polymarket, Kalshi, or Coinbase Advanced Trade.
 
-<img width="1535" height="880" alt="image" src="https://github.com/user-attachments/assets/9ab1f8f2-fb43-44e5-9c0c-57da6d17ba25" />
-
+<img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-45-43" src="https://github.com/user-attachments/assets/10e2fc6c-8c5c-4748-bf6d-a4862c51eccf" />
+<img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-46-09" src="https://github.com/user-attachments/assets/5b3f45ea-fc1f-4e62-bc3e-e3daedbba28c" />
+<img width="2156" height="1007" alt="Screenshot From 2026-03-26 07-46-46" src="https://github.com/user-attachments/assets/28ccd2c7-a016-4504-afd9-2ab3078bb17e" />
 ---
 
 ## Stack
