@@ -11,6 +11,7 @@ from backend.services.stop_loss_executor import run_stop_loss_loop
 from backend.services.drawdown_monitor import drawdown_monitor
 from backend.services.alert_monitor import run_alert_monitor
 from backend.services.fred_scheduler import run_fred_scheduler, _trigger_once as fred_trigger_once
+from backend.services.insider_scanner import run_insider_scanner, scan_markets, get_last_results
 from backend.services.job_registry import registry
 from backend.services.db import close_pool
 from backend.routes.ops import register_trigger
@@ -18,6 +19,14 @@ from backend.middleware.auth import require_auth
 
 # Register one-shot triggers for jobs that support manual fire
 register_trigger("fred_auto_refresh", fred_trigger_once)
+
+async def _insider_trigger_once():
+    from backend.services.insider_scanner import _scan_markets_cache, _scan_exchange_cache
+    if not _scan_markets_cache:
+        raise RuntimeError("No scan targets configured — run POST /api/scanner/insider first")
+    await scan_markets(_scan_markets_cache, _scan_exchange_cache)
+
+register_trigger("insider_scanner", _insider_trigger_once)
 
 try:
     from backend.routes import admin
@@ -33,12 +42,14 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_stop_loss_loop()),
         asyncio.create_task(run_alert_monitor()),
         asyncio.create_task(run_fred_scheduler()),
+        asyncio.create_task(run_insider_scanner()),
     ]
     # Attach tasks to registry so catalog can report live health
-    registry.attach_task("drawdown_monitor",  tasks[0])
+    registry.attach_task("drawdown_monitor",   tasks[0])
     registry.attach_task("stop_loss_executor", tasks[1])
     registry.attach_task("alert_monitor",      tasks[2])
     registry.attach_task("fred_auto_refresh",  tasks[3])
+    registry.attach_task("insider_scanner",    tasks[4])
     yield
     for t in tasks:
         t.cancel()

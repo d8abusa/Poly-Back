@@ -20,6 +20,7 @@ import SettingsPanel from "../components/shared/SettingsPanel";
 import Watchlist from "../components/watchlist/Watchlist";
 import MacroPanel from "../components/macro/MacroPanel";
 import OpsPanel from "../components/ops/OpsPanel";
+import InsiderPanel from "../components/scanner/InsiderPanel";
 import { apiFetch, clearToken } from "../lib/apiFetch";
 
 // ── BacktestConsole — owns ALL shared state ────────────────────────────────────
@@ -61,7 +62,7 @@ export default function BacktestConsole() {
   // ── Capital + execution mode + view ──────────────────────────────────────────
   const [capital, setCapital] = useState<number>(0);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("confirm");
-  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed" | "runs" | "watchlist" | "macro" | "ops">("backtest");
+  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed" | "runs" | "watchlist" | "macro" | "ops" | "insider">("backtest");
 
   // ── Toast ────────────────────────────────────────────────────────────────────
   const [toastMsg, setToastMsg] = useState("");
@@ -398,11 +399,11 @@ export default function BacktestConsole() {
               </span>
             )}
             {/* View nav */}
-            {(["backtest", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist", "macro", "ops"] as const).map(v => {
+            {(["backtest", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist", "macro", "insider", "ops"] as const).map(v => {
               const labels: Record<string, string> = {
                 backtest: "Backtest", signals: "Signals", positions: "Positions",
                 history: "Trade History", strategies: "Strategies", feed: "Feed", runs: "Runs", watchlist: "Watchlist",
-                macro: "Macro", ops: "Ops",
+                macro: "Macro", insider: "Insider", ops: "Ops",
               };
               const active = view === v;
               return (
@@ -576,6 +577,14 @@ export default function BacktestConsole() {
         ) : view === "macro" ? (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
             <MacroPanel />
+          </div>
+        ) : view === "insider" ? (
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <InsiderPanel markets={markets.map(m => ({
+              condition_id: m.condition_id ?? m.id ?? "",
+              token_id:     (m as any).token_id,
+              title:        m.title ?? m.question ?? "",
+            }))} />
           </div>
         ) : view === "ops" ? (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
