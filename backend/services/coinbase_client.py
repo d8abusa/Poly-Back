@@ -179,6 +179,24 @@ class CoinbaseClient(BaseExchangeClient):
             log.warning("Coinbase price history failed %s: %s", product, exc)
             return []
 
+    # ── Live price ────────────────────────────────────────────────────────────
+
+    async def get_last_price(self, market_id: str, token_id: Optional[str] = None) -> Optional[float]:
+        """Return the latest trade price for a product (e.g. 'ETH-USD')."""
+        product = token_id or market_id
+        path    = f"/products/{product}"
+        try:
+            resp = await self._client.get(
+                f"{COINBASE_BASE}{path}",
+                headers=self._auth_headers("GET", path),
+            )
+            resp.raise_for_status()
+            price = resp.json().get("price")
+            return float(price) if price else None
+        except Exception as exc:
+            log.warning("Coinbase get_last_price failed %s: %s", product, exc)
+            return None
+
     # ── Live feed snapshot ────────────────────────────────────────────────────
 
     async def get_market_snapshot(self, market_id: str, token_id: Optional[str] = None) -> dict:
@@ -248,6 +266,7 @@ class CoinbaseClient(BaseExchangeClient):
         size: float,
         limit_price: Optional[float] = None,
         client_order_id: Optional[str] = None,
+        quote_size: Optional[float] = None,   # USD amount for market BUY (avoids base_size precision issues)
     ) -> dict:
         """
         Place a limit or market order via Coinbase Advanced Trade.
@@ -266,19 +285,32 @@ class CoinbaseClient(BaseExchangeClient):
         if limit_price is not None:
             body["order_configuration"] = {
                 "limit_limit_gtc": {
-                    "base_size":   str(size),
-                    "limit_price": str(limit_price),
+                    "base_size":   str(round(size, 8)),
+                    "limit_price": str(round(limit_price, 2)),
                 }
+            }
+        elif quote_size is not None:
+            # Market BUY with USD amount — cleaner than base_size for IOC orders
+            body["order_configuration"] = {
+                "market_market_ioc": {"quote_size": str(round(quote_size, 2))}
             }
         else:
             body["order_configuration"] = {
-                "market_market_ioc": {"base_size": str(size)}
+                "market_market_ioc": {"base_size": str(round(size, 8))}
             }
 
         try:
             resp = await self._client.post(f"{COINBASE_BASE}{path}", headers=headers, json=body)
             resp.raise_for_status()
             data = resp.json()
+
+            # Coinbase returns HTTP 200 even for rejected orders — must check success flag
+            if not data.get("success", True):
+                err = data.get("error_response", {})
+                note = err.get("preview_failure_reason") or err.get("message") or err.get("error") or str(data)
+                log.error("Coinbase order rejected %s: %s", product_id, note)
+                return {"order_id": order_id, "status": "error", "note": note}
+
             order = data.get("success_response", data)
             return {
                 "order_id": order.get("order_id", order_id),

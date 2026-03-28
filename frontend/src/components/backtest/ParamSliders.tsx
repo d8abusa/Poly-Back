@@ -174,7 +174,7 @@ export const DEFAULT_PARAMS: StrategyParams = {
 };
 
 export default function ParamSliders({ strategy, params, onChange, exchange }: ParamSlidersProps) {
-  const isStock = exchange === "yahoo";
+  const isStock = exchange === "yahoo" || exchange === "coinbase";
   const paramMap = isStock ? PARAMS_STOCK : PARAMS;
   const defs = paramMap[strategy] ?? PARAMS[strategy];
   // wizard and other no-param strategies show a note instead of sliders

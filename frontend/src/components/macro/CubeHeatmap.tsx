@@ -83,9 +83,10 @@ function buildCellTrace(cells: Cell[], axes: CubeData["axes"]) {
 }
 
 export default function CubeHeatmap() {
-  const [data, setData]       = useState<CubeData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [data, setData]             = useState<CubeData | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     apiFetch("/api/fred/cube")
@@ -245,39 +246,66 @@ export default function CubeHeatmap() {
     }];
   }
 
+  const toggleBtn = (
+    <button onClick={() => setFullscreen(f => !f)} title={fullscreen ? "Minimize" : "Fullscreen"}
+      style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 3,
+        color: "var(--muted)", cursor: "pointer", fontSize: 11, padding: "1px 6px",
+        fontFamily: "IBM Plex Mono, monospace", lineHeight: 1 }}>
+      {fullscreen ? "⊠" : "⛶"}
+    </button>
+  );
+
+  const titleText = (
+    <span>
+      3D Macro Regime Cube
+      {hasAnimation && <span style={{ color: "#38bdf8", marginLeft: 8, letterSpacing: 0.5 }}>· {window_size}-month rolling window</span>}
+    </span>
+  );
+
+  const subtitle = (
+    <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
+      X = {axes.x} · Y = {axes.y} · Z = {axes.z} · colour = {axes.color} (recession signal)
+      &nbsp;·&nbsp;{data.n_obs} months · size = observations in window
+      {hasAnimation ? " · drag slider or press play to animate" : " · drag to rotate"}
+    </div>
+  );
+
+  const footer = (
+    <div style={{ fontSize: 8, color: "var(--muted)", marginTop: 4, lineHeight: 1.6 }}>
+      Each cube = a macro regime cell · ghost cubes show the full 3×3×3 regime space
+      · colour = avg yield spread (red = inverted / recession risk · green = steep / expansion)
+      {hasAnimation && ` · each frame shows a ${window_size}-month rolling window`}
+    </div>
+  );
+
+  if (fullscreen) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "var(--bg)",
+        display: "flex", flexDirection: "column", padding: "20px 24px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+          <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>{titleText}</span>
+          {toggleBtn}
+        </div>
+        {subtitle}
+        <Plot data={[ghostTrace, cellTrace] as any} layout={{ ...layout, autosize: true }} frames={plotFrames as any}
+          config={{ displayModeBar: true, responsive: true, displaylogo: false }}
+          style={{ width: "100%", flex: 1 }} useResizeHandler />
+        {footer}
+      </div>
+    );
+  }
+
   return (
-    <div style={{
-      background: "var(--surface2)", border: "1px solid var(--border2)",
-      borderRadius: 8, padding: "14px 16px",
-    }}>
-      <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
-        3D Macro Regime Cube
-        {hasAnimation && (
-          <span style={{ color: "#38bdf8", marginLeft: 8, letterSpacing: 0.5 }}>
-            · {window_size}-month rolling window
-          </span>
-        )}
+    <div style={{ background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "14px 16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+        <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>{titleText}</span>
+        {toggleBtn}
       </div>
-      <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
-        X = {axes.x} · Y = {axes.y} · Z = {axes.z} · colour = {axes.color} (recession signal)
-        &nbsp;·&nbsp;{data.n_obs} months · size = observations in window
-        {hasAnimation ? " · drag slider or press play to animate" : " · drag to rotate"}
-      </div>
-
-      <Plot
-        data={[ghostTrace, cellTrace] as any}
-        layout={layout}
-        frames={plotFrames as any}
+      {subtitle}
+      <Plot data={[ghostTrace, cellTrace] as any} layout={layout} frames={plotFrames as any}
         config={{ displayModeBar: false, responsive: true }}
-        style={{ width: "100%", height: hasAnimation ? 480 : 420 }}
-        useResizeHandler
-      />
-
-      <div style={{ fontSize: 8, color: "var(--muted)", marginTop: 4, lineHeight: 1.6 }}>
-        Each cube = a macro regime cell · ghost cubes show the full 3×3×3 regime space
-        · colour = avg yield spread (red = inverted / recession risk · green = steep / expansion)
-        {hasAnimation && ` · each frame shows a ${window_size}-month rolling window`}
-      </div>
+        style={{ width: "100%", height: hasAnimation ? 480 : 420 }} useResizeHandler />
+      {footer}
     </div>
   );
 }

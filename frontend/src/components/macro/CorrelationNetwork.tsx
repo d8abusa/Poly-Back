@@ -34,9 +34,10 @@ function circleLayout(ids: string[]): Record<string, { x: number; y: number }> {
 }
 
 export default function CorrelationNetwork() {
-  const [data, setData]       = useState<NetworkData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [data, setData]             = useState<NetworkData | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     apiFetch("/api/fred/network")
@@ -134,55 +135,72 @@ export default function CorrelationNetwork() {
     name: "negative r", showlegend: true,
   };
 
-  return (
-    <div style={{
-      background: "var(--surface2)", border: "1px solid var(--border2)",
-      borderRadius: 8, padding: "14px 16px",
-    }}>
-      <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
-        Correlation Network
-      </div>
-      <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
-        Nodes = FRED indicators · edges = |r| ≥ {data.threshold} · thickness &amp; opacity = correlation strength
-        · blue = positive · red = negative · hover nodes for details
-      </div>
+  const plotData = [...edgeTraces, nodeTrace, posLegend, negLegend] as any;
 
-      <Plot
-        data={[...edgeTraces, nodeTrace, posLegend, negLegend] as any}
-        layout={{
-          paper_bgcolor: "rgba(0,0,0,0)",
-          plot_bgcolor:  "rgba(0,0,0,0)",
-          margin:        { t: 20, r: 20, b: 20, l: 20 },
-          xaxis: {
-            visible:    false,
-            range:      [-1.45, 1.45],
-            fixedrange: true,
-          },
-          yaxis: {
-            visible:    false,
-            range:      [-1.45, 1.45],
-            fixedrange: true,
-            scaleanchor: "x",
-          },
-          legend: {
-            x: 0.01, y: 0.99,
-            bgcolor:     "rgba(0,0,0,0)",
-            bordercolor: "rgba(255,255,255,0.1)",
-            borderwidth: 1,
-            font:        { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
-          },
-          hovermode: "closest",
-        }}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: "100%", height: 360 }}
-        useResizeHandler
-      />
+  const plotLayout = {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor:  "rgba(0,0,0,0)",
+    margin:        { t: 20, r: 20, b: 20, l: 20 },
+    xaxis: { visible: false, range: [-1.45, 1.45], fixedrange: true },
+    yaxis: { visible: false, range: [-1.45, 1.45], fixedrange: true, scaleanchor: "x" as const },
+    legend: {
+      x: 0.01, y: 0.99, bgcolor: "rgba(0,0,0,0)",
+      bordercolor: "rgba(255,255,255,0.1)", borderwidth: 1,
+      font: { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
+    },
+    hovermode: "closest" as const,
+  };
 
-      {data.edges.length === 0 && (
-        <div style={{ fontSize: 8, color: "#f59e0b", marginTop: 6 }}>
-          ⚠ No edges above threshold ({data.threshold}) — all indicator pairs are weakly correlated
+  const toggleBtn = (
+    <button onClick={() => setFullscreen(f => !f)} title={fullscreen ? "Minimize" : "Fullscreen"}
+      style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 3,
+        color: "var(--muted)", cursor: "pointer", fontSize: 11, padding: "1px 6px",
+        fontFamily: "IBM Plex Mono, monospace", lineHeight: 1 }}>
+      {fullscreen ? "⊠" : "⛶"}
+    </button>
+  );
+
+  const subtitle = (
+    <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
+      Nodes = FRED indicators · edges = |r| ≥ {data.threshold} · thickness &amp; opacity = correlation strength
+      · blue = positive · red = negative · hover nodes for details
+    </div>
+  );
+
+  const warning = data.edges.length === 0 && (
+    <div style={{ fontSize: 8, color: "#f59e0b", marginTop: 6 }}>
+      ⚠ No edges above threshold ({data.threshold}) — all indicator pairs are weakly correlated
+    </div>
+  );
+
+  if (fullscreen) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "var(--bg)",
+        display: "flex", flexDirection: "column", padding: "20px 24px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+          <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>Correlation Network</span>
+          {toggleBtn}
         </div>
-      )}
+        {subtitle}
+        <Plot data={plotData} layout={{ ...plotLayout, autosize: true }}
+          config={{ displayModeBar: true, responsive: true, displaylogo: false }}
+          style={{ width: "100%", flex: 1 }} useResizeHandler />
+        {warning}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "14px 16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+        <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>Correlation Network</span>
+        {toggleBtn}
+      </div>
+      {subtitle}
+      <Plot data={plotData} layout={plotLayout}
+        config={{ displayModeBar: false, responsive: true }}
+        style={{ width: "100%", height: 360 }} useResizeHandler />
+      {warning}
     </div>
   );
 }

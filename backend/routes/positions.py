@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from ..services import position_tracker as pt
 from ..services import risk_manager as risk
+from ..services.db import get_strategy_equity
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/positions", tags=["positions"])
@@ -21,6 +22,10 @@ def _require_admin(x_admin_token: str = Header(default="")):
 
 class ResumeRequest(BaseModel):
     override_reason: str
+
+
+class StopLossUpdate(BaseModel):
+    stop_loss: float | None = None
 
 
 @router.get("")
@@ -45,6 +50,8 @@ async def get_closed_positions():
             "closed_at":    p["closed_at"],
             "realized_pnl": p.get("realized_pnl") or 0.0,
             "close_reason": p.get("close_reason") or "manual",
+            "exchange":     p.get("exchange", "polymarket"),
+            "asset_type":   p.get("asset_type", "prediction_market"),
         }
     return [_to_history(p) for p in pt.get_closed()]
 
@@ -52,6 +59,28 @@ async def get_closed_positions():
 @router.get("/summary")
 async def get_summary():
     return pt.get_summary()
+
+
+@router.get("/equity")
+async def get_equity():
+    """Strategy equity tracker — running PnL per strategy/asset pair.
+    Compounding is tracked but INACTIVE until EQUITY_COMPOUNDING_ENABLED=true."""
+    rows = get_strategy_equity()
+    compounding_enabled = os.getenv("EQUITY_COMPOUNDING_ENABLED", "false").lower() == "true"
+    return {
+        "compounding_enabled": compounding_enabled,
+        "equity": rows,
+    }
+
+
+@router.delete("/{position_id}")
+async def delete_position(position_id: str):
+    """Hard-delete a position record (open or closed) from DB and in-memory cache."""
+    ok = pt.delete_position(position_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Position not found")
+    log.info("Deleted position %s", position_id)
+    return {"status": "deleted", "id": position_id}
 
 
 @router.post("/{position_id}/close")
@@ -64,6 +93,16 @@ async def close_position(
         raise HTTPException(status_code=404, detail="Position not found")
     log.info("Closed position %s  pnl=%.2f  reason=%s", position_id, pos["realized_pnl"], close_reason)
     return {"status": "closed", "position": pos}
+
+
+@router.patch("/{position_id}/stop-loss")
+async def update_stop_loss(position_id: str, body: StopLossUpdate):
+    """Update the stop-loss price on an open position (live — no restart needed)."""
+    pos = pt.update_stop_loss(position_id, body.stop_loss)
+    if pos is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    log.info("Updated stop_loss for %s → %s", position_id, body.stop_loss)
+    return {"status": "updated", "position": pos}
 
 
 @router.post("/{position_id}/prob")

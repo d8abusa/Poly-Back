@@ -10,3 +10,8 @@ frontend/dist/
 *.log
 .DS_Store
 reports/
+certs/
+*.pem
+*.key
+polyback.db
+polyback.db.backup*

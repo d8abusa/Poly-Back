@@ -42,9 +42,11 @@ _RELEASE_LAG_DAYS: dict[str, int] = {
     "DFEDTARU":       1,   # Daily, 1-day lag
     "GDP":           30,   # Quarterly, ~30 days after quarter end
     "T10Y2Y":         1,   # Daily, 1-day lag
+    "T10Y3M":         1,   # Daily, 1-day lag
     "DTWEXBGS":       3,   # Dollar index, ~3 days
     "VIXCLS":         1,   # VIX — daily, 1-day lag
     "BAMLH0A0HYM2":   1,   # HY credit spread — daily, 1-day lag
+    "USEPUINDXD":     1,   # Economic Policy Uncertainty — daily
 }
 
 # How often (in days) we should re-check for new data
@@ -56,9 +58,11 @@ _REFRESH_DAYS: dict[str, int] = {
     "DFEDTARU":       7,    # weekly re-check for daily series
     "GDP":           95,    # quarterly
     "T10Y2Y":         7,
+    "T10Y3M":         7,
     "DTWEXBGS":       7,
     "VIXCLS":         7,    # weekly re-check for daily series
     "BAMLH0A0HYM2":   7,
+    "USEPUINDXD":     7,
 }
 
 # Human-readable labels
@@ -70,9 +74,11 @@ SERIES_META: dict[str, dict] = {
     "DFEDTARU":      {"name": "Fed Funds Target Upper Bound",        "units": "Percent",             "freq": "Daily"},
     "GDP":           {"name": "Real GDP",                            "units": "Billions USD",        "freq": "Quarterly"},
     "T10Y2Y":        {"name": "10Y-2Y Treasury Spread",              "units": "Percent",             "freq": "Daily"},
+    "T10Y3M":        {"name": "10Y-3M Treasury Spread",              "units": "Percent",             "freq": "Daily"},
     "DTWEXBGS":      {"name": "US Dollar Index (Broad)",             "units": "Index Jan 2006=100",  "freq": "Daily"},
     "VIXCLS":        {"name": "CBOE Volatility Index (VIX)",         "units": "Index",               "freq": "Daily"},
     "BAMLH0A0HYM2":  {"name": "US HY Option-Adjusted Spread",        "units": "Percent",             "freq": "Daily"},
+    "USEPUINDXD":    {"name": "Economic Policy Uncertainty Index",   "units": "Index",               "freq": "Daily"},
 }
 
 
@@ -171,13 +177,6 @@ async def _fetch_from_fred(series_id: str, limit: int = 24) -> tuple[list[dict],
     if not api_key:
         raise RuntimeError("FRED_API_KEY not set in .env")
 
-    total_used = get_pull_count()
-    if total_used >= 95:
-        raise RuntimeError(
-            f"FRED pull budget nearly exhausted ({total_used}/100). "
-            "Add FRED_API_KEY to a paid plan or use cached data only."
-        )
-
     async with httpx.AsyncClient(timeout=15.0) as client:
         # Fetch series metadata
         meta_resp = await client.get(
@@ -201,9 +200,7 @@ async def _fetch_from_fred(series_id: str, limit: int = 24) -> tuple[list[dict],
         obs_resp.raise_for_status()
         observations = obs_resp.json().get("observations", [])
 
-    # Note: fetching series info + observations = 2 API calls
-    # We log this as 2 calls but one pull event
-    log.info("FRED pull: %s — %d observations (total pulls so far: %d)", series_id, len(observations), total_used + 2)
+    log.info("FRED pull: %s — %d observations", series_id, len(observations))
     return observations, meta
 
 

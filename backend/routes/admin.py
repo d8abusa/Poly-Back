@@ -7,6 +7,7 @@ This module adds any additional admin-only operations.
 import logging
 from fastapi import APIRouter
 from ..services.coinbase_client import get_coinbase_client, COINBASE_BASE
+from ..services import telegram_service
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -16,6 +17,16 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 async def admin_status():
     """Basic admin health check."""
     return {"status": "ok"}
+
+
+@router.post("/telegram/test")
+async def test_telegram():
+    """Send a test message to verify Telegram bot configuration."""
+    from fastapi import HTTPException
+    sent = await telegram_service.send_message("✅ PolyBack Telegram connected successfully.")
+    if not sent:
+        raise HTTPException(status_code=503, detail="Telegram not configured — check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env")
+    return {"status": "sent"}
 
 
 @router.get("/coinbase-probe")

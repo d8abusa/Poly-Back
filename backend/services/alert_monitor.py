@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from ..services.watchlist_service import check_triggers
+from ..services.watchlist_service import check_triggers, get_watchlist
 from .job_registry import registry
 
 log = logging.getLogger(__name__)

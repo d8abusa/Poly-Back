@@ -5,12 +5,15 @@ Structured for future email/webhook extension — add dispatchers
 in send_alert() once external integrations are configured.
 """
 
+import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from ..models.schemas import SignalSchema
 
+log = logging.getLogger(__name__)
 
 _alerts: list[dict] = []
 
@@ -31,6 +34,16 @@ def send_alert(signal: SignalSchema, error: Optional[str] = None) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _alerts.append(alert)
+
+    # Fire-and-forget Telegram notification
+    try:
+        from .telegram_service import send_signal
+        asyncio.get_event_loop().create_task(
+            send_signal(signal, note="Alert-only mode — no order placed")
+        )
+    except Exception as exc:
+        log.debug("Telegram task skipped: %s", exc)
+
     return alert
 
 

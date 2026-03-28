@@ -79,7 +79,7 @@ export const globalCss = `
   .no-results-sub { font-size:10px; }
 
   /* RIGHT — DETAIL PANEL */
-  .detail-panel { display:flex; flex-direction:column; overflow:hidden; }
+  .detail-panel { display:flex; flex-direction:column; overflow-y:auto; }
   .detail-empty { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--muted); }
   .detail-empty-icon { font-size:36px; opacity:0.25; }
   .detail-empty-title { font-family:'Syne',sans-serif; font-size:15px; color:var(--muted2); }

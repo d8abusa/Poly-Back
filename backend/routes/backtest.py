@@ -68,7 +68,9 @@ def _inject_macro(req: BacktestRequest, market_title: str = "") -> BacktestReque
 @router.post("", response_model=BacktestResult)
 async def run_backtest(req: BacktestRequest, exchange: str = "polymarket"):
     """Run a backtest on a single market using its historical price curve."""
-    client = get_exchange_client(exchange)
+    # req.exchange takes precedence over the query param (frontend sends it in the body)
+    effective_exchange = req.exchange if req.exchange and req.exchange != "polymarket" else exchange
+    client = get_exchange_client(effective_exchange)
     try:
         history = await client.get_price_history(
             req.condition_id, token_id=req.token_id, interval=req.interval
@@ -101,15 +103,16 @@ async def run_backtest_batch(req: BatchBacktestRequest, exchange: str = "polymar
     if not req.markets:
         raise HTTPException(status_code=400, detail="markets list is empty")
 
+    # req.exchange takes precedence over the query param
+    effective_exchange = req.exchange if req.exchange and req.exchange != "polymarket" else exchange
+
     # ── HARBOR: stop-loss enforcement ─────────────────────────────────────────
-    # Auto mode places orders with no human review — stop-loss is mandatory.
-    # Confirm mode still has manual approval, so the user can set stop-loss then.
     _rcfg = get_risk_config()
     if _rcfg.get("require_stop_loss", False) and req.execution_mode in ("auto",):
         if req.stop_loss is None:
             default_sl = (
                 _rcfg.get("default_stop_loss_pm", 0.10)
-                if exchange != "yahoo"
+                if effective_exchange != "yahoo"
                 else _rcfg.get("default_stop_loss", 0.08)
             )
             raise HTTPException(
@@ -121,11 +124,11 @@ async def run_backtest_batch(req: BatchBacktestRequest, exchange: str = "polymar
                 ),
             )
 
-    client = get_exchange_client(exchange)
+    client = get_exchange_client(effective_exchange)
 
     market_ids = [m.condition_id for m in req.markets]
     token_ids  = [m.token_id     for m in req.markets]
-    log.info("batch backtest: %d market(s), strategy=%s, exchange=%s", len(market_ids), req.strategy, exchange)
+    log.info("batch backtest: %d market(s), strategy=%s, exchange=%s", len(market_ids), req.strategy, effective_exchange)
 
     try:
         histories, fetch_ms = await client.fetch_market_histories_batch(
@@ -138,17 +141,14 @@ async def run_backtest_batch(req: BatchBacktestRequest, exchange: str = "polymar
     # Stocks: enforce a per-tier minimum hold to avoid whipsaw re-entries.
     # Standard = 3d (cash account settlement), Margin = 2d, DayTrading = 1d.
     # Prediction markets have no settlement constraint so min_hold stays 1.
-    if exchange == "yahoo":
+    if effective_exchange == "yahoo":
         min_hold = TIER_MIN_HOLD.get(req.account_tier, 3)
     else:
         min_hold = 1
-    log.info("account_tier=%s min_hold=%d exchange=%s", req.account_tier, min_hold, exchange)
+    log.info("account_tier=%s min_hold=%d exchange=%s", req.account_tier, min_hold, effective_exchange)
 
-    # Default stock backtests to the last 365 days when no window is specified.
-    # Without this, Yahoo returns history back to IPO (AAPL → 1980) and the
-    # backtest runs on decades of irrelevant data.
     from datetime import date, timedelta
-    if exchange == "yahoo" and not req.date_from and not req.date_to:
+    if effective_exchange == "yahoo" and not req.date_from and not req.date_to:
         effective_date_from = (date.today() - timedelta(days=365)).isoformat()
         effective_date_to   = date.today().isoformat()
     else:
@@ -177,7 +177,7 @@ async def run_backtest_batch(req: BatchBacktestRequest, exchange: str = "polymar
 
     # Persist run to DB (fire-and-forget — don't fail the response if it errors)
     try:
-        save_backtest_run(batch, strategy=req.strategy, exchange=exchange)
+        save_backtest_run(batch, strategy=req.strategy, exchange=effective_exchange)
     except Exception as exc:
         log.warning("Failed to persist backtest run: %s", exc)
 

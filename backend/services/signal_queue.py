@@ -134,3 +134,17 @@ def get_executed() -> list[SignalSchema]:
 def get_rejected() -> list[SignalSchema]:
     _ensure_loaded()
     return list(_rejected)
+
+
+def get_signal(signal_id: str) -> Optional[SignalSchema]:
+    """Look up any signal by ID regardless of status."""
+    _ensure_loaded()
+    if signal_id in _pending:
+        return _pending[signal_id]
+    for sig in _executed:
+        if sig.id == signal_id:
+            return sig
+    for sig in _rejected:
+        if sig.id == signal_id:
+            return sig
+    return None

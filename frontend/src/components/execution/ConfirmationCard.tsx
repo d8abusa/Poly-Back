@@ -37,12 +37,18 @@ export default function ConfirmationCard({
     setEditing(false);
   };
 
+  const edgePct = isCrypto
+    ? `+${(signal.expected_edge * 100).toFixed(2)}%`
+    : `+${signal.expected_edge.toFixed(2)}%`;
+
   const METRICS: [string, string][] = [
     ["Entry",  fmtPrice(signal.entry_price)],
     ["Target", fmtPrice(signal.target_price)],
-    ["Edge",   `+${signal.expected_edge.toFixed(2)}%`],
+    ["Stop",   signal.stop_loss != null ? fmtPrice(signal.stop_loss) : "—"],
+    ["Edge",   edgePct],
     ["Size",   `$${signal.suggested_size}`],
-    ["Shares", isCrypto ? signal.suggested_shares.toFixed(6) : `${signal.suggested_shares.toFixed(0)}`],
+    [isCrypto ? "Units" : "Shares",
+               isCrypto ? `${signal.suggested_shares.toFixed(6)}` : `${signal.suggested_shares.toFixed(0)}`],
     ["Conf",   `${(signal.confidence * 100).toFixed(0)}%`],
   ];
 
@@ -88,7 +94,7 @@ export default function ConfirmationCard({
       </div>
 
       {/* Metrics grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, marginBottom: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 8 }}>
         {METRICS.map(([l, v]) => (
           <div key={l} style={{ background: "var(--surface2)", borderRadius: 4, padding: "5px 7px" }}>
             <div style={{ fontSize: 7, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>{l}</div>
@@ -125,12 +131,16 @@ export default function ConfirmationCard({
             />
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 3 }}>Price override (¢)</div>
+            <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 3 }}>
+              Price override ({isCrypto ? "$" : "¢"})
+            </div>
             <input
               type="number"
               value={editPrice}
               onChange={e => setEditPrice(e.target.value)}
-              placeholder={`${(signal.entry_price * 100).toFixed(1)}`}
+              placeholder={isCrypto
+                ? `${signal.entry_price.toFixed(2)}`
+                : `${(signal.entry_price * 100).toFixed(1)}`}
               style={{
                 width: "100%", background: "var(--surface2)", border: "1px solid var(--border2)",
                 borderRadius: 4, padding: "5px 8px", color: "var(--text)",

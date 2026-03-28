@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..models.schemas import SignalSchema
-from .db import get_cursor, row_to_dict, asset_type_from_exchange
+from .db import get_cursor, row_to_dict, asset_type_from_exchange, record_trade_equity
 
 
 # ── In-memory cache (populated on first access) ───────────────────────────────
@@ -94,12 +94,49 @@ def update_prob(position_id: str, prob: float) -> Optional[dict]:
     _ensure_loaded()
     pos = _open.get(position_id)
     if pos is not None:
-        pos["current_prob"] = max(0.01, min(0.99, prob))
+        # Crypto positions use real dollar prices (> 1.0); only clamp for prediction markets
+        if pos.get("asset_type") == "crypto":
+            pos["current_prob"] = max(0.0, prob)
+        else:
+            pos["current_prob"] = max(0.01, min(0.99, prob))
         with get_cursor() as cur:
             cur.execute(
                 "UPDATE positions SET current_prob=%s WHERE id=%s",
                 (pos["current_prob"], position_id),
             )
+    return pos
+
+
+def delete_position(position_id: str) -> bool:
+    """Hard-delete a position from the DB and in-memory cache. Returns True if found."""
+    _ensure_loaded()
+    found = position_id in _open
+    if found:
+        _open.pop(position_id)
+    else:
+        # Check closed list
+        idx = next((i for i, p in enumerate(_closed) if p["id"] == position_id), None)
+        if idx is not None:
+            _closed.pop(idx)
+            found = True
+    if found:
+        with get_cursor() as cur:
+            cur.execute("DELETE FROM positions WHERE id=%s", (position_id,))
+    return found
+
+
+def update_stop_loss(position_id: str, stop_loss: Optional[float]) -> Optional[dict]:
+    """Update the stop-loss price on an open position (in-memory + DB)."""
+    _ensure_loaded()
+    pos = _open.get(position_id)
+    if pos is None:
+        return None
+    pos["stop_loss"] = stop_loss
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE positions SET stop_loss=%s WHERE id=%s",
+            (stop_loss, position_id),
+        )
     return pos
 
 
@@ -126,6 +163,11 @@ def close_position(position_id: str, close_reason: str = "manual") -> Optional[d
             WHERE id=%(id)s
         """, pos)
     _closed.append(pos)
+    # Track equity per strategy — dormant until EQUITY_COMPOUNDING_ENABLED=true
+    try:
+        record_trade_equity(pos)
+    except Exception:
+        pass   # never fail a close due to equity tracking
     return pos
 
 

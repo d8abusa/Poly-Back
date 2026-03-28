@@ -43,13 +43,14 @@ async def fred_prior(body: dict):
 
 @router.get("/budget")
 async def fred_budget():
-    """How many FRED API pulls have been used vs the 100-pull free tier."""
+    """FRED API pull log — unlimited free tier, 120 req/min rate limit only."""
     used = get_pull_count()
     return {
         "used":      used,
-        "budget":    100,
-        "remaining": max(0, 100 - used),
-        "warning":   used >= 80,
+        "budget":    None,
+        "remaining": None,
+        "warning":   False,
+        "note":      "FRED API is free and unlimited; 120 req/min rate limit applies",
     }
 
 
@@ -76,26 +77,30 @@ async def fred_radar():
     # CPI is expressed as YoY % change (converted below).
     RANGES = {
         "T10Y2Y":       (-3.0,  3.5),   # yield spread %
+        "T10Y3M":       (-3.0,  3.5),   # 10Y-3M spread (stronger recession signal)
         "DFEDTARU":     ( 0.0, 10.0),   # Fed target rate %
         "CPIAUCSL":     ( 0.0,  8.0),   # YoY % change
         "UNRATE":       ( 3.0, 12.0),   # unemployment %
         "DTWEXBGS":     (90.0,140.0),   # dollar index
         "VIXCLS":       ( 8.0, 50.0),   # VIX: calm=8, crisis=50
         "BAMLH0A0HYM2": ( 1.5,  9.0),  # HY OAS %: tight=1.5, distress=9
+        "USEPUINDXD":   ( 50.0, 300.0), # Policy Uncertainty: low=50, extreme=300
     }
 
     LABELS = {
         "T10Y2Y":       "Yield Spread",
+        "T10Y3M":       "10Y-3M Spread",
         "DFEDTARU":     "Fed Rate",
         "CPIAUCSL":     "CPI YoY",
         "UNRATE":       "Unemployment",
         "DTWEXBGS":     "Dollar Index",
         "VIXCLS":       "VIX",
         "BAMLH0A0HYM2": "HY Spread",
+        "USEPUINDXD":   "Policy Uncertainty",
     }
 
     # Invert these so that "higher score = more stress / tighter conditions"
-    INVERT = {"T10Y2Y", "DTWEXBGS"}  # high yield spread = less recession risk → invert; strong dollar = tighter
+    INVERT = {"T10Y2Y", "T10Y3M", "DTWEXBGS"}  # high spread = low recession risk → invert; strong dollar = tighter
 
     def _normalise(sid: str, value: float) -> float:
         lo, hi = RANGES[sid]
@@ -138,6 +143,103 @@ async def fred_radar():
         })
 
     return {"spokes": result}
+
+
+@router.get("/radar-history")
+async def fred_radar_history():
+    """
+    Historical radar spoke values — one frame per cached month.
+
+    Uses the same normalization as /radar so the animated fingerprint is
+    directly comparable to the current snapshot.  Returns oldest→newest.
+    """
+    RANGES = {
+        "T10Y2Y":       (-3.0,  3.5),
+        "T10Y3M":       (-3.0,  3.5),
+        "DFEDTARU":     ( 0.0, 10.0),
+        "CPIAUCSL":     ( 0.0,  8.0),
+        "UNRATE":       ( 3.0, 12.0),
+        "DTWEXBGS":     (90.0,140.0),
+        "VIXCLS":       ( 8.0, 50.0),
+        "BAMLH0A0HYM2": ( 1.5,  9.0),
+        "USEPUINDXD":   (50.0, 300.0),
+    }
+    LABELS = {
+        "T10Y2Y":       "Yield Spread",
+        "T10Y3M":       "10Y-3M Spread",
+        "DFEDTARU":     "Fed Rate",
+        "CPIAUCSL":     "CPI YoY",
+        "UNRATE":       "Unemployment",
+        "DTWEXBGS":     "Dollar Index",
+        "VIXCLS":       "VIX",
+        "BAMLH0A0HYM2": "HY Spread",
+        "USEPUINDXD":   "Policy Uncertainty",
+    }
+    INVERT = {"T10Y2Y", "T10Y3M", "DTWEXBGS"}
+
+    def _norm(sid: str, value: float) -> float:
+        lo, hi = RANGES[sid]
+        pct = (value - lo) / (hi - lo) * 100.0
+        pct = max(0.0, min(100.0, pct))
+        return round(100.0 - pct if sid in INVERT else pct, 1)
+
+    def _to_monthly(rows: list) -> dict[str, float]:
+        m: dict = {}
+        for r in reversed(rows):
+            m[str(r["obs_date"])[:7]] = float(r["value"])
+        return m
+
+    series_monthly: dict[str, dict[str, float]] = {}
+    for sid in RANGES:
+        rows = _get_cached(sid)
+        if not rows:
+            continue
+        raw = _to_monthly(rows)
+        if sid == "CPIAUCSL" and len(rows) >= 13 and float(rows[0]["value"]) > 50:
+            months = sorted(raw.keys())
+            yoy: dict[str, float] = {}
+            for i in range(12, len(months)):
+                curr, prev = raw[months[i]], raw[months[i - 12]]
+                yoy[months[i]] = (curr - prev) / prev * 100.0
+            series_monthly[sid] = yoy
+        else:
+            series_monthly[sid] = raw
+
+    if not series_monthly:
+        return {"frames": [], "spokes": list(LABELS.values()), "n_obs": 0}
+
+    # Union of all months that appear in ANY series with >= 2 months of data.
+    # We don't require every series to cover every month — missing spokes are
+    # simply omitted from that frame rather than collapsing the whole history.
+    rich_series = {sid: d for sid, d in series_monthly.items() if len(d) >= 2}
+    if not rich_series:
+        return {"frames": [], "spokes": list(LABELS.values()), "n_obs": 0}
+
+    all_months = sorted(set().union(*[set(d.keys()) for d in rich_series.values()]))
+
+    frames = []
+    for month in all_months:
+        spokes = []
+        for sid in RANGES:
+            if sid not in rich_series:
+                continue
+            raw_val = rich_series[sid].get(month)
+            if raw_val is None:
+                continue
+            spokes.append({
+                "indicator": LABELS[sid],
+                "series_id": sid,
+                "current":   _norm(sid, raw_val),
+                "raw":       round(raw_val, 3),
+            })
+        if len(spokes) >= 2:          # need at least 2 spokes to draw a shape
+            frames.append({"month": month, "spokes": spokes})
+
+    return {
+        "frames":  frames,
+        "spokes":  list(LABELS.values()),
+        "n_obs":   len(frames),
+    }
 
 
 @router.get("/parallel")
@@ -907,13 +1009,6 @@ async def refresh_fred_series(
     Use limit=500 for daily series to get ~2 years of history for visualizations.
     Returns 503 if budget is exhausted.
     """
-    used = get_pull_count()
-    if used >= 95:
-        raise HTTPException(
-            status_code=503,
-            detail=f"FRED budget nearly exhausted ({used}/100). "
-                   "Upgrade to paid plan at fred.stlouisfed.org.",
-        )
     try:
         return await get_series(series_id.upper(), force_refresh=True, limit=limit)
     except RuntimeError as exc:

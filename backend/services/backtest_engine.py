@@ -118,11 +118,17 @@ class PredictionMarketBacktester:
         if not self.history:
             return self._error("No price history available for this market/interval.")
 
-        # Detect stock/crypto mode: PM probabilities are always in [0, 1].
-        # Stocks and crypto have prices >> 1 (e.g. $254, $70 000).
-        # Use the LAST price, not the first — early history (e.g. 1980s AAPL splits)
-        # can have prices below $1 even for assets that currently trade at hundreds.
-        self._is_stock: bool = float(self.history[-1]["p"]) > 1.0
+        # Detect dollar-priced mode (stocks / crypto) vs prediction market (probabilities 0–1).
+        # Primary signal: exchange field on the request — explicit and unambiguous.
+        # Fallback: price heuristic (last price > 1.0) covers legacy callers and any
+        # exchange not yet registered in _DOLLAR_EXCHANGES (e.g. Robinhood before its
+        # client is wired up — just add it to the set and the engine handles the rest).
+        _DOLLAR_EXCHANGES = {"coinbase", "yahoo", "robinhood"}
+        _exchange = getattr(self.req, "exchange", "") or ""
+        self._is_stock: bool = (
+            _exchange.lower() in _DOLLAR_EXCHANGES
+            or float(self.history[-1]["p"]) > 1.0
+        )
         self._stock_ref_high: float = float(self.history[0]["p"])    # rolling high for dip detection — starts at first price, advances forward in time
 
         history = self.history
@@ -142,7 +148,10 @@ class PredictionMarketBacktester:
             return self._wizard(history)
 
         for pt in history:
-            prob = max(0.0, min(1.0, float(pt["p"])))   # clamp: guard against NaN/out-of-range ticks
+            raw  = float(pt["p"])
+            # Clamp only for prediction markets (probabilities must be 0–1).
+            # Stocks and crypto use raw dollar prices — clamping destroys them.
+            prob = raw if self._is_stock else max(0.0, min(1.0, raw))
             date = self._ts_to_date(int(pt["t"]))
             self._tick_idx += 1
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import CorrelationHeatmap from "./CorrelationHeatmap";
 import ParallelCoords from "./ParallelCoords";
 import SurfacePlot from "./SurfacePlot";
@@ -74,6 +74,17 @@ interface RadarSpoke {
   raw:       number | null;
 }
 
+interface RadarFrame {
+  month:  string;
+  spokes: RadarSpoke[];
+}
+
+interface RadarHistory {
+  frames: RadarFrame[];
+  spokes: string[];
+  n_obs:  number;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const REGIME_COLOR: Record<string, string> = {
@@ -141,16 +152,19 @@ function regimeHeat(key: string, val: string): number {
   return map[key]?.[val] ?? 0.5;
 }
 
-const SERIES_ORDER = ["T10Y2Y", "DFEDTARU", "CPIAUCSL", "UNRATE", "PAYEMS", "DTWEXBGS", "GDP"];
+const SERIES_ORDER = ["T10Y2Y", "T10Y3M", "DFEDTARU", "FEDFUNDS", "CPIAUCSL", "UNRATE", "PAYEMS", "DTWEXBGS", "GDP", "USEPUINDXD"];
 
 const SERIES_SHORT: Record<string, string> = {
-  T10Y2Y:   "10Y-2Y Spread",
-  DFEDTARU: "Fed Target Rate",
-  CPIAUCSL: "CPI Index",
-  UNRATE:   "Unemployment",
-  PAYEMS:   "Nonfarm Payrolls",
-  DTWEXBGS: "Dollar Index",
-  GDP:      "Real GDP",
+  T10Y2Y:     "10Y-2Y Spread",
+  T10Y3M:     "10Y-3M Spread",
+  DFEDTARU:   "Fed Target Rate",
+  FEDFUNDS:   "Fed Funds (actual)",
+  CPIAUCSL:   "CPI Index",
+  UNRATE:     "Unemployment",
+  PAYEMS:     "Nonfarm Payrolls",
+  DTWEXBGS:   "Dollar Index",
+  GDP:        "Real GDP",
+  USEPUINDXD: "Policy Uncertainty",
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -160,34 +174,66 @@ export default function MacroPanel() {
   const [dash, setDash]         = useState<FredDashboard | null>(null);
   const [budget, setBudget]     = useState<BudgetInfo | null>(null);
   const [radar, setRadar]       = useState<RadarSpoke[]>([]);
+  const [radarHistory, setRadarHistory]   = useState<RadarHistory | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [frameIdx, setFrameIdx]           = useState(0);
+  const [playing, setPlaying]             = useState(false);
+  const playRef                 = useRef<ReturnType<typeof setInterval> | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [error, setError]       = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [ctxRes, dashRes, budRes, radarRes] = await Promise.all([
+      const [ctxRes, dashRes, budRes, radarRes, histRes] = await Promise.all([
         apiFetch("/api/fred/macro-context").then(r => r.ok ? r.json() : null),
         apiFetch("/api/fred/dashboard").then(r => r.ok ? r.json() : null),
         apiFetch("/api/fred/budget").then(r => r.ok ? r.json() : null),
         apiFetch("/api/fred/radar").then(r => r.ok ? r.json() : null),
+        apiFetch("/api/fred/radar-history").then(r => r.ok ? r.json() : null),
       ]);
       if (ctxRes)           setCtx(ctxRes);
       if (dashRes)          setDash(dashRes);
       if (budRes)           setBudget(budRes);
       if (radarRes?.spokes) setRadar(radarRes.spokes);
+      if (histRes?.frames?.length) {
+        setRadarHistory(histRes);
+        setFrameIdx(histRes.frames.length - 1);
+      }
+      setHistoryLoading(false);
     } catch (e) {
       setError("Failed to load macro data");
     }
   }, []);
 
+  // Play/pause interval
+  useEffect(() => {
+    if (playing && radarHistory) {
+      playRef.current = setInterval(() => {
+        setFrameIdx(i => {
+          if (i >= radarHistory.frames.length - 1) {
+            setPlaying(false);
+            return i;
+          }
+          return i + 1;
+        });
+      }, 600);
+    } else {
+      if (playRef.current) clearInterval(playRef.current);
+    }
+    return () => { if (playRef.current) clearInterval(playRef.current); };
+  }, [playing, radarHistory]);
+
   useEffect(() => { load(); }, [load]);
 
+  // Daily series need deep history for the time dial — pull 500 obs (~2 years)
+  const DAILY_SERIES = new Set(["T10Y2Y", "T10Y3M", "DFEDTARU", "DTWEXBGS", "VIXCLS", "BAMLH0A0HYM2", "USEPUINDXD"]);
+
   const handleRefresh = async (seriesId: string) => {
-    if (budget && budget.remaining <= 0) return;
     setRefreshing(seriesId);
+    const limit = DAILY_SERIES.has(seriesId) ? 500 : 60;
     try {
-      await apiFetch(`/api/fred/${seriesId}/refresh`, { method: "POST" });
+      await apiFetch(`/api/fred/${seriesId}/refresh?limit=${limit}`, { method: "POST" });
       await load();
     } catch {
       // ignore — load() will show stale data
@@ -228,84 +274,143 @@ export default function MacroPanel() {
         }}>
           {quality} data
         </span>
-        {budget && (
-          <span style={{
-            fontSize: 9, color: budget.warning ? "#ef4444" : "var(--muted)",
-            marginLeft: "auto",
-          }}>
-            FRED pulls: {budget.used}/{budget.budget}
-          </span>
-        )}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+          {budget && (
+            <span style={{ fontSize: 9, color: "var(--muted)" }}>
+              FRED pulls: {budget.used} (unlimited)
+            </span>
+          )}
+          <button
+            onClick={async () => {
+              setRefreshing("__all__");
+              const allSeries = [...DAILY_SERIES, "CPIAUCSL", "UNRATE", "PAYEMS", "FEDFUNDS", "GDP"];
+              for (const sid of allSeries) {
+                const limit = DAILY_SERIES.has(sid) ? 500 : 60;
+                await apiFetch(`/api/fred/${sid}/refresh?limit=${limit}`, { method: "POST" }).catch(() => {});
+              }
+              await load();
+              setRefreshing(null);
+            }}
+            disabled={refreshing !== null}
+            title="Refresh all FRED series with deep history (daily=500obs, monthly=60obs)"
+            style={{
+              fontSize: 8, padding: "3px 8px", borderRadius: 3, cursor: "pointer",
+              border: "1px solid var(--border2)", background: "var(--surface)",
+              color: refreshing === "__all__" ? "var(--accent)" : "var(--muted)",
+              fontFamily: "IBM Plex Mono, monospace", opacity: refreshing !== null ? 0.5 : 1,
+            }}
+          >
+            {refreshing === "__all__" ? "refreshing…" : "↻ refresh all"}
+          </button>
+        </div>
       </div>
 
       {error && (
         <div style={{ fontSize: 10, color: "#ef4444" }}>{error}</div>
       )}
 
-      {/* ── Radar chart — regime fingerprint ──────────────────────────── */}
-      {radar.length > 0 && (
-        <div style={{
-          background: "var(--surface2)", border: "1px solid var(--border2)",
-          borderRadius: 8, padding: "14px 16px",
-        }}>
-          <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
-            Regime Fingerprint
+      {/* ── Radar chart — regime fingerprint with time dial ──────────── */}
+      {radar.length > 0 && (() => {
+        const hasHistory = radarHistory && radarHistory.frames.length > 1;
+        const activeFrame = hasHistory ? radarHistory!.frames[frameIdx] : null;
+        const displayData = activeFrame ? activeFrame.spokes : radar;
+        const isLive = !hasHistory || frameIdx === radarHistory!.frames.length - 1;
+        const currentMonth = activeFrame?.month ?? null;
+        const accentColor = isLive ? "#00d4a8" : "#f59e0b";
+
+        return (
+          <div style={{ background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "14px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+                Regime Fingerprint
+              </span>
+              {currentMonth && (
+                <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "IBM Plex Mono, monospace", color: accentColor }}>
+                  {currentMonth}
+                  {isLive && <span style={{ fontSize: 7, color: "var(--muted)", marginLeft: 4 }}>LIVE</span>}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
+              0 = benign · 100 = maximum stress
+              {!hasHistory && " · dashed = recent avg"}
+              {hasHistory && " · scrub or play to trace policy impact over time"}
+            </div>
+
+            <ResponsiveContainer width="100%" height={280}>
+              <RadarChart data={displayData} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
+                <PolarGrid stroke="var(--border2)" />
+                <PolarAngleAxis
+                  dataKey="indicator"
+                  tick={{ fill: "var(--muted2)", fontSize: 10, fontFamily: "IBM Plex Mono, monospace" }}
+                />
+                <PolarRadiusAxis
+                  angle={90} domain={[0, 100]}
+                  tick={{ fill: "var(--muted)", fontSize: 8 }}
+                  tickCount={3} stroke="var(--border)"
+                />
+                <Radar
+                  name={currentMonth ?? "Current"}
+                  dataKey="current"
+                  stroke={accentColor} fill={accentColor}
+                  fillOpacity={0.25} strokeWidth={2}
+                  dot={{ r: 3, fill: accentColor, strokeWidth: 0 }}
+                  isAnimationActive={true} animationDuration={300}
+                />
+                {!hasHistory && (
+                  <Radar name="Recent avg" dataKey="avg"
+                    stroke="#94a3b8" fill="none"
+                    strokeDasharray="4 3" strokeWidth={1.5}
+                  />
+                )}
+                <Tooltip
+                  contentStyle={{ background: "var(--surface2)", border: "1px solid var(--border2)",
+                    borderRadius: 6, fontSize: 10, fontFamily: "IBM Plex Mono, monospace", color: "var(--text)" }}
+                  formatter={(value: number, name: string, props: any) => {
+                    const raw = props.payload?.raw;
+                    return [`${value?.toFixed(0)}/100${raw != null ? ` (${raw})` : ""}`, name];
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: 9, fontFamily: "IBM Plex Mono, monospace", color: "var(--muted2)", paddingTop: 8 }} />
+              </RadarChart>
+            </ResponsiveContainer>
+
+            {hasHistory ? (
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                <input
+                  type="range" min={0} max={radarHistory!.frames.length - 1} value={frameIdx}
+                  onChange={e => { setPlaying(false); setFrameIdx(Number(e.target.value)); }}
+                  style={{ width: "100%", accentColor: "#00d4a8", cursor: "pointer" }}
+                />
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => { setPlaying(false); setFrameIdx(0); }} title="Rewind"
+                      style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 3,
+                        color: "var(--muted)", cursor: "pointer", fontSize: 11, padding: "1px 7px", fontFamily: "IBM Plex Mono, monospace" }}>⏮</button>
+                    <button onClick={() => setPlaying(p => !p)} title={playing ? "Pause" : "Play"}
+                      style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 3,
+                        color: playing ? "#00d4a8" : "var(--muted)", cursor: "pointer", fontSize: 11, padding: "1px 7px", fontFamily: "IBM Plex Mono, monospace" }}>
+                      {playing ? "⏸" : "▶"}
+                    </button>
+                    <button onClick={() => { setPlaying(false); setFrameIdx(radarHistory!.frames.length - 1); }} title="Jump to current"
+                      style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 3,
+                        color: isLive ? "#00d4a8" : "var(--muted)", cursor: "pointer", fontSize: 11, padding: "1px 7px", fontFamily: "IBM Plex Mono, monospace" }}>⏭</button>
+                  </div>
+                  <span style={{ fontSize: 8, color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace" }}>
+                    {frameIdx + 1} / {radarHistory!.frames.length} months
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ marginTop: 8, fontSize: 8, color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace" }}>
+                {historyLoading
+                  ? "Loading history…"
+                  : "Time dial unavailable — refresh FRED series to build cache"}
+              </div>
+            )}
           </div>
-          <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
-            0 = benign · 100 = maximum stress &nbsp;·&nbsp; dashed = recent avg
-          </div>
-          <ResponsiveContainer width="100%" height={280}>
-            <RadarChart data={radar} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
-              <PolarGrid stroke="var(--border2)" />
-              <PolarAngleAxis
-                dataKey="indicator"
-                tick={{ fill: "var(--muted2)", fontSize: 10, fontFamily: "IBM Plex Mono, monospace" }}
-              />
-              <PolarRadiusAxis
-                angle={90}
-                domain={[0, 100]}
-                tick={{ fill: "var(--muted)", fontSize: 8 }}
-                tickCount={3}
-                stroke="var(--border)"
-              />
-              <Radar
-                name="Current"
-                dataKey="current"
-                stroke="#00d4a8"
-                fill="#00d4a8"
-                fillOpacity={0.25}
-                strokeWidth={2}
-                dot={{ r: 3, fill: "#00d4a8", strokeWidth: 0 }}
-              />
-              <Radar
-                name="Recent avg"
-                dataKey="avg"
-                stroke="#94a3b8"
-                fill="none"
-                strokeDasharray="4 3"
-                strokeWidth={1.5}
-              />
-              <Tooltip
-                contentStyle={{
-                  background: "var(--surface2)", border: "1px solid var(--border2)",
-                  borderRadius: 6, fontSize: 10, fontFamily: "IBM Plex Mono, monospace",
-                  color: "var(--text)",
-                }}
-                formatter={(value: number, name: string, props: any) => {
-                  const raw = props.payload?.raw;
-                  return [
-                    `${value?.toFixed(0)}/100${raw != null ? ` (${raw})` : ""}`,
-                    name,
-                  ];
-                }}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: 9, fontFamily: "IBM Plex Mono, monospace", color: "var(--muted2)", paddingTop: 8 }}
-              />
-            </RadarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Regime gauges + strategy modifiers side by side */}
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
@@ -460,13 +565,12 @@ export default function MacroPanel() {
                 </span>
                 <button
                   onClick={() => handleRefresh(sid)}
-                  disabled={isRefreshing || (budget?.remaining ?? 1) <= 0}
-                  title={budget?.remaining === 0 ? "FRED budget exhausted" : `Refresh ${sid} (burns 2 pulls)`}
+                  disabled={isRefreshing}
+                  title={`Refresh ${sid} from FRED API`}
                   style={{
                     fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer",
                     border: "1px solid var(--border2)", background: "var(--surface)",
                     color: isRefreshing ? "var(--accent)" : "var(--muted)",
-                    opacity: (budget?.remaining ?? 1) <= 0 ? 0.4 : 1,
                     fontFamily: "IBM Plex Mono, monospace",
                   }}
                 >
@@ -476,11 +580,7 @@ export default function MacroPanel() {
             );
           })}
         </div>
-        {budget && budget.remaining <= 5 && (
-          <div style={{ fontSize: 8, color: "#ef4444", marginTop: 10 }}>
-            ⚠ {budget.remaining} FRED pulls remaining — refreshes will fail when exhausted
-          </div>
-        )}
+        {}
       </div>
 
       {/* XGBoost features */}

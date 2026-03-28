@@ -26,6 +26,7 @@ from ..models.schemas import SignalSchema, ExecutionMode
 from .exchange_router import get_exchange_client
 from . import signal_queue as sq
 from . import alert_service as alerts
+from . import position_tracker as pt
 
 log = logging.getLogger(__name__)
 
@@ -151,6 +152,13 @@ async def _scan_asset(product_id: str) -> Optional[dict]:
     # ── Signal generation ──────────────────────────────────────────────────
     if product_id in _pending_for:
         log.debug("crypto_scanner: %s already has pending signal — skip", product_id)
+        _scanner_state["last_signals"][product_id] = summary
+        return summary
+
+    # Don't open a new position if one is already open for this asset
+    open_ids = {p["market_id"] for p in pt.get_open()}
+    if product_id in open_ids:
+        log.debug("crypto_scanner: %s already has an open position — skip", product_id)
         _scanner_state["last_signals"][product_id] = summary
         return summary
 

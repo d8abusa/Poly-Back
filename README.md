@@ -3,8 +3,18 @@
 A full-stack research and live-execution platform for prediction markets and equities. Backtest 10+ strategies against historical data, monitor macro regime signals from FRED, stage signals, and route live orders to Polymarket, Kalshi, or Coinbase Advanced Trade.
 
 <img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-45-43" src="https://github.com/user-attachments/assets/10e2fc6c-8c5c-4748-bf6d-a4862c51eccf" />
-<img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-46-09" src="https://github.com/user-attachments/assets/5b3f45ea-fc1f-4e62-bc3e-e3daedbba28c" />
+<img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-46-09" src="https://github.com/user-attachments/assets/5b3f45ec-fc1f-4e62-bc3e-e3daedbba28c" />
 <img width="2156" height="1007" alt="Screenshot From 2026-03-26 07-46-46" src="https://github.com/user-attachments/assets/28ccd2c7-a016-4504-afd9-2ab3078bb17e" />
+
+---
+
+## What PolyBack Actually Is
+
+Most trading tools answer one question: *when to enter?* PolyBack is built around a harder question: *are conditions right to act at all?*
+
+The architecture reflects a deliberate philosophy. Strategies generate signals from price and probability mechanics. The macro dashboard tells you whether to act on those signals — and at what size. A human makes the final call with full context. That three-layer structure is intentional. Fully automated systems optimize against revised data, publication lags, and unknown unknowns. A human who understands the current regime — including what isn't in the data yet — can weight those gaps. PolyBack makes the gaps visible rather than hiding them.
+
+The macro tab is not a signal generator. It's a **gut-check layer** — a calibration surface between raw FRED data and trade decisions. The visualizations are designed to be used actively, not just displayed.
 
 ---
 
@@ -15,43 +25,50 @@ A full-stack research and live-execution platform for prediction markets and equ
 | Backend | Python 3.13, FastAPI, httpx (async), Pydantic v2, NumPy, umap-learn |
 | Frontend | React 18, TypeScript, Vite, Recharts, Plotly.js |
 | Database | PostgreSQL (`polyback_db`) |
-| Auth | JWT (single-user, password-based) |
+| Auth | JWT (single-user, password-based, 8-hour sessions) |
 | TLS | mkcert self-signed certs — both servers run HTTPS |
-| Exchanges | Polymarket CLOB · Kalshi · Coinbase Advanced Trade · Yahoo Finance (stocks) · Manifold |
-| Macro Data | FRED (St. Louis Fed) — 8 series, local PostgreSQL cache |
+| Exchanges | Polymarket CLOB · Kalshi · Coinbase Advanced Trade · Yahoo Finance · Manifold |
+| Macro Data | FRED (St. Louis Fed) — 10 series, local PostgreSQL cache, free and unlimited |
 
 ---
 
-## What Makes This Different
+## Macro Regime Visualizations
 
-Most quant dashboards treat macro data as a label — a number in a sidebar. PolyBack treats it as a first-class signal that actively governs position sizing, strategy selection, and risk exposure. Every strategy that touches stocks or indexes is gated through a live macro regime derived from real FRED data. That regime is not a static config — it updates automatically as new FRED releases land.
+Seven purpose-built charts that show the macro environment in ways no standard dashboard offers. Every chart has a fullscreen toggle (`⛶`) — click once to expand to full viewport, again to minimize. Plotly's Reset Axes button is re-enabled in fullscreen mode so you can always escape a zoomed crop.
 
-The Macro tab goes further with seven purpose-built visualizations that show the macro environment in ways no standard dashboard offers:
+### 1. Regime Fingerprint (Radar Chart + Time Dial)
 
-### Macro Regime Visualizations
+Five FRED indicators normalised to 0–100 plotted on a pentagon. The current regime polygon is compared against a rolling average baseline so you can see at a glance whether conditions are tightening, easing, or drifting. No numbers to parse — the shape tells the story.
 
-**1. Regime Fingerprint (Radar Chart)**
-Five FRED indicators normalised to 0–100 and plotted on a pentagon. The current regime polygon is compared against a rolling average baseline so you can see at a glance whether conditions are tightening, easing, or drifting. No numbers to parse — the shape tells the story.
+**Time Dial:** A scrubber below the chart animates the fingerprint across every cached month, showing how the macro regime has morphed over time. Scrub manually or hit play to watch the pentagon breathe through tightening cycles, inflation surges, and labour market pivots. The current frame shows in teal; historical frames in amber. This is the Hans Rosling moment for monetary policy: regime transitions become motion rather than static aggregates.
 
-**2. Correlation Heatmap**
-Pearson r between all indicator pairs, computed on month-over-month first-differences for stationarity. Pairwise date alignment handles the reality that daily series (T10Y2Y, DFEDTARU) and monthly series (CPI, Unemployment) don't share the same release dates. The heatmap shows which indicators move together and which are genuinely independent — essential for understanding when a single macro signal is redundant versus additive.
+> **On data fidelity:** FRED stores *revised* values, not initial prints. Employment data (PAYEMS/UNRATE) is frequently revised significantly downward months after release. The time dial shows hindsight-revised history — what policymakers saw at the time is a different dataset entirely. For unrevised primary sources, see the FRASER NLP roadmap item below.
 
-**3. Parallel Coordinates — Regime Trajectories**
-Every month is a line connecting five normalised axes. Lines are coloured by recency (dark purple = oldest, bright yellow = most recent) using the Plasma colorscale. Where lines braid and cross marks regime transitions. Where they run parallel marks stability. This is the single fastest way to spot whether the macro environment has been consistent or volatile across multiple dimensions simultaneously.
+### 2. Correlation Heatmap
 
-**4. 3D Macro Landscape (Surface Plot)**
-Time on the X axis, indicator on the Y axis, normalised score on the Z axis — a terrain map of the macro environment. Plateaus are stable regimes. Ridges are rapid shifts. The surface is drag-rotatable and uses a custom five-stop colorscale (deep red → navy → deep green) with contour lines projected onto the floor for depth reading. Reuses the parallel coordinates data pipeline with zero additional API calls.
+Pearson r between all indicator pairs on month-over-month first-differences for stationarity. Pairwise date alignment handles the reality that daily series (T10Y2Y, DFEDTARU) and monthly series (CPI, Unemployment) don't share release dates. Reveals which indicators move together and which are genuinely independent — essential for knowing when a macro signal is redundant versus additive.
 
-**5. Correlation Network (Force Graph)**
-Indicators as nodes on a circular layout, edges drawn only where |r| ≥ 0.15. Edge thickness and opacity both scale with correlation strength. Blue edges are positive correlations, red edges are negative. Node size scales with connection count — highly connected indicators (economic hubs) are visually larger. Hover a node to see all its pairwise r values and observation counts. This makes structural relationships visible that a heatmap can only hint at.
+### 3. Parallel Coordinates — Regime Trajectories
 
-**6. 3D Macro Regime Cube (Animated)**
-Three indicators form the spatial axes of a 3×3×3 regime grid (Low / Mid / High bins per axis). Yield spread is encoded as colour — red for inverted curves (recession risk), green for steep curves (expansion). Every one of the 27 possible regime cells is shown as a faint ghost cube so you can see not just where the economy *has* been, but which regime cells it has *never* visited.
+Every month is a line connecting five normalised axes. Lines are coloured by recency (dark purple = oldest, bright yellow = most recent) using the Plasma colorscale. Where lines braid and cross marks regime transitions. Where they run parallel marks stability. The single fastest way to spot whether the macro environment has been consistent or volatile across multiple dimensions simultaneously.
 
-The animated version — the differentiator — adds a **3-month rolling window slider** and play/pause controls. Scrub through time and watch regime cells light up and fade as the economy moves through the macro state space. This is the Hans Rosling moment for macro data: the trajectory through the cube reveals tightening cycles, inflation surges, and labour market pivots as motion rather than as static aggregates. No other trading dashboard does this.
+### 4. 3D Macro Landscape (Surface Plot)
 
-**7. UMAP Regime Scatter**
-UMAP (Uniform Manifold Approximation and Projection) reduces the 5-indicator feature space to 2D while preserving local structure, so months with similar macro environments cluster together. Points are colour-coded by recession risk (green / amber / red), month labels sit above each point, a dotted trajectory line connects months in chronological order, and a cyan ring marks the current position. The scatter answers a question no other chart can: *which past months looked most like right now?* As the cache grows, the geometry stabilises and the clusters sharpen automatically.
+Time on X, indicator on Y, normalised score on Z — a terrain map of the macro environment. Plateaus are stable regimes. Ridges are rapid shifts. The surface is drag-rotatable and uses a five-stop colorscale (deep red → navy → deep green) with contour lines projected onto the floor. Reuses the parallel coordinates data pipeline with zero additional API calls.
+
+### 5. Correlation Network (Force Graph)
+
+Indicators as nodes, edges drawn where |r| ≥ 0.15. Edge thickness and opacity scale with correlation strength. Blue = positive, red = negative. Node size scales with connection count — economic hubs are visually larger. Hover to inspect pairwise r values. Makes structural relationships visible that a heatmap can only hint at.
+
+### 6. 3D Macro Regime Cube (Animated)
+
+Three indicators form the axes of a 3×3×3 regime grid (Low/Mid/High per axis). Yield spread encoded as colour — red for inverted curves (recession risk), green for steep curves (expansion). All 27 regime cells shown as ghost cubes so you see which cells the economy has *never* visited, not just where it has been.
+
+A **3-month rolling window slider** with play/pause control scrubs through the cache. Watch regime cells light up and fade as the economy moves through macro state space. No other trading dashboard does this.
+
+### 7. UMAP Regime Scatter
+
+UMAP reduces the 5-indicator feature space to 2D while preserving local structure. Months with similar macro conditions cluster together. Points are colour-coded by recession risk, a dotted trajectory connects them chronologically, and a cyan ring marks the current month. Answers a question no other chart can: *which past months looked most like right now?* Geometry stabilises automatically as the cache grows — no code changes needed.
 
 ---
 
@@ -84,7 +101,7 @@ Polymarket/
 │   │   ├── strategies.py                # Strategy catalogue with metadata
 │   │   ├── signals.py                   # Signal queue + stage-from-backtest
 │   │   ├── positions.py                 # Open / closed positions, risk controls
-│   │   ├── fred.py                      # FRED macro data, 7 visualization endpoints
+│   │   ├── fred.py                      # FRED macro data, 8 visualization endpoints
 │   │   ├── feed.py                      # Live order book + trade stream
 │   │   ├── watchlist.py                 # Watchlist + price alerts
 │   │   ├── scanner.py                   # Live market scanner
@@ -114,10 +131,11 @@ Polymarket/
             ├── backtest/                # BacktestPanel, Results, ParamSliders,
             │                            #   StrategyControls, BulkLoadModal, ScannerControls
             ├── macro/                   # MacroPanel + 7 visualization components
-            │   ├── MacroPanel.tsx       # Regime gauges, strategy modifiers, Kelly prior
+            │   ├── MacroPanel.tsx       # Regime gauges, time dial, Kelly prior, equity tracker
             │   ├── CorrelationHeatmap.tsx
             │   ├── CorrelationNetwork.tsx
             │   ├── CubeHeatmap.tsx      # Animated 3D regime cube with time slider
+            │   ├── MacroSunburst.tsx    # Sector/theme breakdown sunburst
             │   ├── ParallelCoords.tsx
             │   ├── SurfacePlot.tsx
             │   └── UmapScatter.tsx
@@ -126,7 +144,7 @@ Polymarket/
             ├── feed/                    # LiveFeed (order book + trade stream)
             ├── history/                 # HistoryView (closed trade log + PnL)
             ├── market/                  # MarketSearch, MarketCard, MarketDetail
-            ├── positions/               # PositionTracker
+            ├── positions/               # PositionTracker (includes strategy equity panel)
             ├── runs/                    # RunsView (saved backtest history)
             └── shared/                  # AuthStatus, LoginScreen, SettingsPanel,
                                          #   StrategyDetailPanel, Watchlist
@@ -167,7 +185,7 @@ psql -c "ALTER USER polyback WITH PASSWORD 'yourpassword';"
 psql -c "GRANT ALL PRIVILEGES ON DATABASE polyback_db TO polyback;"
 ```
 
-The schema is created automatically on first startup.
+The schema is created automatically on first startup (9 tables).
 
 ### 5. TLS certificates
 
@@ -175,7 +193,7 @@ The schema is created automatically on first startup.
 # Install mkcert: https://github.com/FiloSottile/mkcert
 mkcert -install
 mkdir certs && cd certs
-mkcert localhost 127.0.0.1 10.0.0.46   # replace with your LAN IP if needed
+mkcert localhost 127.0.0.1 10.0.0.x   # replace with your LAN IP if needed
 ```
 
 ---
@@ -194,12 +212,15 @@ ADMIN_PASSWORD_HASH=<sha256 of your password>
 JWT_SECRET=<random 64-char hex string>
 JWT_EXPIRE_MINUTES=480
 
-# FRED (St. Louis Fed) — free tier: 100 API calls
+# FRED (St. Louis Fed) — free and unlimited, 120 req/min rate limit only
 FRED_API_KEY=<your key from fred.stlouisfed.org>
 
 # Stop-loss executor
 STOP_LOSS_ENABLED=true
 STOP_LOSS_POLL_INTERVAL=30
+
+# Strategy equity compounding (disabled by default — tracking only)
+EQUITY_COMPOUNDING_ENABLED=false
 ```
 
 Exchange credentials go in `backend/.env`:
@@ -291,26 +312,42 @@ A background stop-loss executor polls open positions every 30 seconds and auto-c
 
 ## FRED Macro Dashboard
 
-The **Macro** tab shows live regime signals derived from FRED series and renders seven analytical visualizations:
+The **Macro** tab derives live regime signals from FRED series and renders seven analytical visualizations. FRED's API is **free and unlimited** — the only constraint is a 120 req/min rate limit. The cache auto-refreshes on each series' release schedule.
+
+### Tracked Series
 
 | Series | Description | Frequency |
 |--------|-------------|-----------|
-| T10Y2Y | 10Y-2Y Treasury Spread (recession signal) | Daily |
+| T10Y2Y | 10Y–2Y Treasury Spread (recession signal) | Daily |
+| T10Y3M | 10Y–3M Treasury Spread (alternative recession signal) | Daily |
 | DFEDTARU | Fed Funds Target Upper Bound | Daily |
+| FEDFUNDS | Effective Federal Funds Rate | Monthly |
 | CPIAUCSL | CPI All Urban Consumers | Monthly |
 | UNRATE | Unemployment Rate | Monthly |
 | PAYEMS | Nonfarm Payrolls | Monthly |
 | DTWEXBGS | US Dollar Index (Broad) | Weekly |
 | GDP | Real GDP | Quarterly |
+| USEPUINDXD | US Economic Policy Uncertainty Index | Daily |
 
-FRED has a 100-call free tier. The cache auto-refreshes on the series release schedule — monthly series re-check every 32 days, daily series every 7 days. Each refresh costs 2 calls. Daily series should be seeded with `limit=500` on first run to get ~2 years of history for the visualization endpoints.
+### Seeding the Cache
+
+Daily series should be seeded with `limit=500` on first run to get ~2 years of history for the time dial and visualization endpoints. Use the **↻ refresh all** button in the Macro tab header, or curl individually:
 
 ```bash
-# Seed daily series with full history (run once after setup)
-curl -X POST "https://localhost:8000/api/fred/T10Y2Y/refresh?limit=500" -H "Authorization: Bearer <token>"
-curl -X POST "https://localhost:8000/api/fred/DFEDTARU/refresh?limit=500" -H "Authorization: Bearer <token>"
-curl -X POST "https://localhost:8000/api/fred/DTWEXBGS/refresh?limit=500" -H "Authorization: Bearer <token>"
+TOKEN=<your JWT>
+for SERIES in T10Y2Y T10Y3M DFEDTARU DTWEXBGS USEPUINDXD; do
+  curl -X POST "https://localhost:8000/api/fred/${SERIES}/refresh?limit=500" \
+    -H "Authorization: Bearer $TOKEN"
+done
 ```
+
+The time dial requires at least 3 cached months across ≥ 2 series to activate.
+
+---
+
+## Strategy Equity Tracker
+
+The **Positions** tab includes a per-strategy equity panel showing running PnL, trade count, win rate, and current equity for each active strategy. By default this is **tracking only** — it records outcomes but does not compound capital across trades. Set `EQUITY_COMPOUNDING_ENABLED=true` in `.env` to enable live compounding (see `strategy_equity` table in `db.py`).
 
 ---
 
@@ -338,7 +375,7 @@ curl -X POST "https://localhost:8000/api/fred/DTWEXBGS/refresh?limit=500" -H "Au
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `/api/signals` | Pending signal queue |
-| POST | `/api/signals/from-backtest` | Stage a signal derived from backtest metrics |
+| POST | `/api/signals/from-backtest` | Stage a signal from backtest metrics |
 | POST | `/api/signals/{id}/approve` | Approve (routes real order for Coinbase signals) |
 | POST | `/api/signals/{id}/reject` | Reject |
 
@@ -356,14 +393,63 @@ curl -X POST "https://localhost:8000/api/fred/DTWEXBGS/refresh?limit=500" -H "Au
 |--------|-------|-------------|
 | GET | `/api/fred/macro-context` | Current macro regime + strategy modifiers |
 | GET | `/api/fred/dashboard` | Snapshot of all series (no API call) |
-| GET | `/api/fred/budget` | Remaining FRED API pull budget |
-| GET | `/api/fred/radar` | Regime fingerprint — 5 indicators normalised 0–100 |
+| GET | `/api/fred/budget` | FRED pull count (unlimited — informational only) |
+| GET | `/api/fred/radar` | Regime fingerprint — indicators normalised 0–100 |
+| GET | `/api/fred/radar-history` | Per-month frames for the regime time dial |
 | GET | `/api/fred/parallel` | Parallel coordinates data — all indicators by month |
 | GET | `/api/fred/correlation` | Pearson r matrix on pairwise first-differences |
 | GET | `/api/fred/network` | Correlation network — nodes + edges above threshold |
 | GET | `/api/fred/cube` | 3D regime cube — binned cells + animation frames |
 | GET | `/api/fred/umap` | UMAP 2D embedding of the macro feature space |
-| POST | `/api/fred/{series_id}/refresh` | Force refresh a series (costs 2 pulls, limit up to 500) |
+| POST | `/api/fred/{series_id}/refresh` | Force refresh a series — `?limit=500` for daily series |
+
+---
+
+## Lessons Learned
+
+These aren't warnings — they're scar tissue. Each one cost real debugging time and is now permanently baked into the codebase.
+
+**FRED is free and unlimited.** An early implementation tracked a synthetic call budget and blocked refreshes after ~100 "uses." FRED's real constraint is 120 req/min — no lifetime limit exists. The fake counter was removed entirely; the `/budget` endpoint now reflects reality.
+
+**Daily series need `limit=500` on first pull.** A `limit=24` on a daily series yields 24 daily observations — about 1 month when resampled to monthly. The regime fingerprint time dial requires ≥ 3 months to activate. Seed daily series with `limit=500` (~2 years) on first run.
+
+**FRED stores revised data, not initial prints.** Employment data (PAYEMS/UNRATE) is frequently revised downward months after release. The macro time dial shows the hindsight-corrected story. What policymakers actually saw at the time requires primary sources (FOMC transcripts, Beige Books via FRASER — see roadmap).
+
+**Always add null guards in frontend when backend data changes.** When new fields are added to backend responses, stale cached data will reach React components that don't expect them. Missing null guards (`??`, `?.`) cause blank-screen crashes. Guard everything at the component boundary.
+
+**`uvicorn --reload` doesn't always pick up `__init__.py` changes.** If behavior looks stale after modifying service files, kill and restart manually.
+
+**Vite's default `index.css` collapses views.** The boilerplate includes `body { display: flex; place-items: center }` which causes views to collapse to a centered strip. Remove it, or every layout will fight it.
+
+**The 2-column `.layout` grid collapses single-child views to 340px.** When a view has only one child, wrap with `display: flex; flex: 1` instead of `.layout`.
+
+**Fullscreen overlays need `z-index: 9999` and `position: fixed; inset: 0`.** Lower z-indices lose to sticky headers and sidebars. `inset: 0` is cleaner than spelling out top/right/bottom/left.
+
+**Plotly disables the toolbar in embed mode.** Set `displayModeBar: true` explicitly in fullscreen mode or users have no way to reset a zoomed chart.
+
+**SQL schema blocks placed outside `cur.execute("""...""")` cause silent import failures.** Python will parse the `CREATE TABLE` string as a standalone expression with no error — but the table never gets created, and the failure only surfaces at runtime when the table is referenced. Keep all DDL inside a single SQL string.
+
+---
+
+## Roadmap
+
+### FRASER NLP — Fed Policy Tone Detection
+
+Mine FOMC transcripts, Beige Book releases, and Fed Chair speeches from the FRASER digital archive for language tone shifts. Detect hawkish/dovish pivot language before it's fully priced in. Feed sentiment score as a signal confidence modifier.
+
+This is the correct complement to FRED quantitative data: FRASER primary sources capture what policymakers *actually saw* at the time — the unrevised real-time layer that FRED's revised time series cannot provide. FRASER API access already applied for.
+
+### Robinhood Execution
+
+Engine is ready (`exchange_router.py`). Needs a Robinhood client + router + frontend exchange selector.
+
+### Kalshi Live Execution
+
+Phase 4 goal. API key is configured. Needs order routing wired through the signal approval flow.
+
+### 3D Macro Heatmap
+
+Correlate FRED macro indicators with strategy performance over time — axes: time × indicator × value. Will need Three.js or Plotly 3D. Planned after FRASER NLP.
 
 ---
 
@@ -371,7 +457,8 @@ curl -X POST "https://localhost:8000/api/fred/DTWEXBGS/refresh?limit=500" -H "Au
 
 - All API routes except `/api/auth/login` require a `Bearer <token>` header.
 - The stop-loss executor runs as a background asyncio task — resets on server restart.
-- Yahoo Finance (stocks/ETFs/indexes) is supported via `exchange=yahoo` — no API key required.
+- Yahoo Finance (stocks/ETFs/indexes) via `exchange=yahoo` — no API key required.
 - Manifold Markets is play-money only — order routing is disabled.
 - `.env` files and `certs/` are gitignored — never commit credentials.
-- UMAP geometry stabilises with more data. The regime scatter will sharpen as the FRED cache grows month-by-month with no code changes required.
+- Default admin password is `polyback` — change it. The hash goes in `.env` as `ADMIN_PASSWORD_HASH`.
+- UMAP geometry stabilises with more data. The regime scatter sharpens automatically as the cache grows.

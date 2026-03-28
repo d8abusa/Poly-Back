@@ -27,6 +27,13 @@ function fmtPnl(val: number): string {
   return `${val >= 0 ? "+" : ""}$${Math.abs(val).toFixed(2)}`;
 }
 
+function fmtProb(val: number, assetType?: string): string {
+  if (assetType === "crypto" || assetType === "stock") {
+    return "$" + val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return `${(val * 100).toFixed(0)}¢`;
+}
+
 function fmtPct(val: number): string {
   return `${val >= 0 ? "+" : ""}${val.toFixed(1)}%`;
 }
@@ -64,7 +71,20 @@ function PnLBar({ positions, summary }: { positions: LivePosition[]; summary: Po
 }
 
 // ── Prob bar ───────────────────────────────────────────────────────────────────
-function ProbBar({ prob, color }: { prob: number; color: string }) {
+function ProbBar({ prob, entry, exit, color, assetType }: { prob: number; entry: number; exit: number; color: string; assetType?: string }) {
+  if (assetType === "crypto" || assetType === "stock") {
+    // Show progress toward exit target as a dollar-range bar
+    const range = exit - entry;
+    const pct = range !== 0 ? Math.max(0, Math.min(100, ((prob - entry) / range) * 100)) : 0;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ width: 60, height: 3, background: "var(--border2)", borderRadius: 2, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct.toFixed(0)}%`, background: color, borderRadius: 2, transition: "width 0.4s ease" }} />
+        </div>
+        <span style={{ color: "var(--muted2)", fontSize: 10 }}>{pct.toFixed(0)}%</span>
+      </div>
+    );
+  }
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <div style={{ width: 60, height: 3, background: "var(--border2)", borderRadius: 2, overflow: "hidden" }}>
@@ -108,10 +128,10 @@ function PositionDetail({ pos, onClose }: { pos: LivePosition | null; onClose: (
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
         {item("Side",         pos.side,                                   pos.side === "YES" ? "var(--yes)" : "var(--no)")}
         {item("Strategy",     pos.strategy,                               "var(--accent)")}
-        {item("Entry Prob",   `${(pos.entry_price * 100).toFixed(0)}¢`)}
-        {item("Current Prob", `${(pos.liveProb * 100).toFixed(0)}¢`,     isPos ? "var(--yes)" : "var(--no)")}
-        {item("Exit Target",  `${(pos.exit_target * 100).toFixed(0)}¢`)}
-        {item("Stop Loss",    pos.stop_loss ? `${(pos.stop_loss * 100).toFixed(0)}¢` : "—", "var(--no)")}
+        {item("Entry Prob",   fmtProb(pos.entry_price, pos.asset_type))}
+        {item("Current Prob", fmtProb(pos.liveProb,    pos.asset_type),  isPos ? "var(--yes)" : "var(--no)")}
+        {item("Exit Target",  fmtProb(pos.exit_target, pos.asset_type))}
+        {item("Stop Loss",    pos.stop_loss ? fmtProb(pos.stop_loss, pos.asset_type) : "—", "var(--no)")}
         {item("Shares",       pos.shares.toFixed(0))}
         {item("Capital",      `$${pos.capital.toFixed(0)}`)}
       </div>
@@ -244,6 +264,7 @@ export default function PositionTracker() {
   const [filter,     setFilter]     = useState<Filter>("all");
   const [closingId,  setClosingId]  = useState<string | null>(null);
   const [log,        setLog]        = useState<LogEntry[]>([]);
+  const [equity,     setEquity]     = useState<{ compounding_enabled: boolean; equity: any[] }>({ compounding_enabled: false, equity: [] });
 
   const posRef = useRef(positions);
   posRef.current = positions;
@@ -287,12 +308,21 @@ export default function PositionTracker() {
     return () => clearInterval(id);
   }, [loadPositions]);
 
-  // ── Live prob tick (every 2s) ─────────────────────────────────────────────────
+  useEffect(() => {
+    apiFetch("/api/positions/equity")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setEquity(d); })
+      .catch(() => {});
+  }, []);
+
+  // ── Live prob tick (every 2s) — prediction markets only ─────────────────────
   useEffect(() => {
     const id = setInterval(() => {
       setLiveProbs(prev => {
         const next = { ...prev };
         posRef.current.forEach(p => {
+          // Only simulate drift for prediction markets — crypto/stock prices come from the backend
+          if (p.asset_type === "crypto" || p.asset_type === "stock") return;
           if (p.id in next) {
             const drift = (Math.random() - 0.49) * 0.006;
             next[p.id] = Math.max(0.02, Math.min(0.98, next[p.id] + drift));
@@ -380,6 +410,7 @@ export default function PositionTracker() {
                   const pnl   = calcPnl(pos);
                   const pct   = pnlPct(pos);
                   const isPos = pnl >= 0;
+                  const isCrypto = pos.asset_type === "crypto" || pos.asset_type === "stock";
                   const probColor = pos.side === "YES"
                     ? (pos.liveProb > pos.entry_price ? "var(--yes)" : "var(--no)")
                     : (pos.liveProb < pos.entry_price ? "var(--yes)" : "var(--no)");
@@ -408,16 +439,16 @@ export default function PositionTracker() {
                         </span>
                       </td>
                       <td style={{ padding: "10px 16px", fontFamily: "IBM Plex Mono, monospace", fontSize: 11, color: "var(--muted2)" }}>
-                        {(pos.entry_price * 100).toFixed(0)}¢
+                        {fmtProb(pos.entry_price, pos.asset_type)}
                       </td>
                       <td style={{ padding: "10px 16px", fontFamily: "IBM Plex Mono, monospace", fontSize: 11, fontWeight: 500, color: probColor }}>
-                        {(pos.liveProb * 100).toFixed(0)}¢
+                        {fmtProb(pos.liveProb, pos.asset_type)}
                       </td>
                       <td style={{ padding: "10px 16px" }}>
-                        <ProbBar prob={pos.liveProb} color={probColor} />
+                        <ProbBar prob={pos.liveProb} entry={pos.entry_price} exit={pos.exit_target} color={probColor} assetType={pos.asset_type} />
                       </td>
                       <td style={{ padding: "10px 16px", fontFamily: "IBM Plex Mono, monospace", fontSize: 11, color: "var(--muted2)" }}>
-                        {pos.shares.toFixed(0)}
+                        {isCrypto ? pos.shares.toFixed(6) : pos.shares.toFixed(0)}
                       </td>
                       <td style={{ padding: "10px 16px", fontFamily: "IBM Plex Mono, monospace", fontSize: 11, fontWeight: 500, color: isPos ? "var(--yes)" : "var(--no)" }}>
                         {fmtPnl(pnl)}
@@ -463,6 +494,34 @@ export default function PositionTracker() {
               Risk Gauges
             </div>
             <RiskGauges positions={livePositions} />
+          </div>
+
+          {/* Strategy Equity */}
+          <div style={{ padding: 16, borderBottom: "1px solid var(--border)" }}>
+            <div style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 9, letterSpacing: "0.15em", color: "var(--muted)", textTransform: "uppercase", marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
+              <span>Strategy Equity</span>
+              <span style={{ color: equity.compounding_enabled ? "var(--yes)" : "var(--muted)", fontSize: 8 }}>
+                {equity.compounding_enabled ? "COMPOUNDING ON" : "TRACKING ONLY"}
+              </span>
+            </div>
+            {equity.equity.length === 0 ? (
+              <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace" }}>No closed trades yet</div>
+            ) : (
+              equity.equity.map((row: any, i: number) => (
+                <div key={i} style={{ marginBottom: 8, padding: "6px 8px", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 3 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                    <span style={{ fontSize: 9, color: "var(--accent)", fontFamily: "IBM Plex Mono, monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>{row.strategy} · {row.market_id}</span>
+                    <span style={{ fontSize: 9, color: row.total_realized_pnl >= 0 ? "var(--yes)" : "var(--no)", fontFamily: "IBM Plex Mono, monospace" }}>
+                      {row.total_realized_pnl >= 0 ? "+" : ""}${row.total_realized_pnl.toFixed(2)}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 9, color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace" }}>{row.trade_count} trade{row.trade_count !== 1 ? "s" : ""} · {row.trade_count > 0 ? Math.round(row.win_count / row.trade_count * 100) : 0}% W</span>
+                    <span style={{ fontSize: 9, color: "var(--muted2)", fontFamily: "IBM Plex Mono, monospace" }}>Eq: ${row.current_equity.toFixed(2)}</span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
           {/* Activity Log */}

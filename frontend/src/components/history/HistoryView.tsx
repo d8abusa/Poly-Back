@@ -8,7 +8,7 @@ import {
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface ClosedPosition {
-  id: number;
+  id: string;
   market: string;
   category: string;
   side: "YES" | "NO";
@@ -20,6 +20,8 @@ interface ClosedPosition {
   closed_at: string;
   realized_pnl: number;
   close_reason: "target" | "stop_loss" | "manual" | "resolution";
+  exchange: string;
+  asset_type: string;
 }
 
 
@@ -41,12 +43,28 @@ const REASON_LABELS: Record<string, { label: string; color: string }> = {
 };
 const DEFAULT_REASON = { label: "Closed", color: "#8892a4" };
 
+const EXCHANGE_LABELS: Record<string, { label: string; color: string }> = {
+  coinbase:    { label: "COINBASE",    color: "#0052ff" },
+  kalshi:      { label: "KALSHI",      color: "#7b61ff" },
+  polymarket:  { label: "POLYMARKET",  color: "#00d4a8" },
+  yahoo:       { label: "YAHOO",       color: "#6001d2" },
+  robinhood:   { label: "ROBINHOOD",   color: "#22c55e" },
+};
+const DEFAULT_EXCHANGE = { label: "UNKNOWN", color: "#4a5568" };
+
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function fmtPnl(n: number) {
   return (n >= 0 ? "+" : "") + "$" + Math.abs(n).toFixed(2);
+}
+
+function fmtPrice(price: number, assetType: string) {
+  if (assetType === "crypto" || assetType === "stock") {
+    return "$" + price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return (price * 100).toFixed(0) + "¢";
 }
 
 // Custom tooltip for charts
@@ -69,15 +87,30 @@ export default function HistoryView() {
   const [filterStrategy, setFilterStrategy] = useState<string>("All");
   const [filterReason, setFilterReason]     = useState<string>("All");
   const [sortKey, setSortKey]               = useState<"closed_at" | "realized_pnl">("closed_at");
-  const [selectedId, setSelectedId]         = useState<number | null>(null);
+  const [selectedId, setSelectedId]         = useState<string | null>(null);
+  const [deletingId, setDeletingId]         = useState<string | null>(null);
 
-  // Fetch real closed positions from the API
-  useEffect(() => {
+  const loadHistory = () =>
     apiFetch("/api/positions/closed")
       .then(r => r.ok ? r.json() : [])
       .then((data: ClosedPosition[]) => setHistory(Array.isArray(data) ? data : []))
       .catch(() => setHistory([]));
-  }, []);
+
+  // Fetch real closed positions from the API
+  useEffect(() => { loadHistory(); }, []);
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm("Delete this trade record permanently?")) return;
+    setDeletingId(id);
+    try {
+      await apiFetch(`/api/positions/${id}`, { method: "DELETE" });
+      if (selectedId === id) setSelectedId(null);
+      await loadHistory();
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   // ── Derived stats ─────────────────────────────────────────────────────────
 
@@ -130,7 +163,7 @@ export default function HistoryView() {
 
   // ── Selected position ─────────────────────────────────────────────────────
 
-  const selected = history.find(p => p.id === selectedId);
+  const selected = selectedId ? history.find(p => p.id === selectedId) : undefined;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -272,7 +305,7 @@ export default function HistoryView() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Market", "Side", "Strategy", "Entry", "Exit", "Shares", "PnL", "Exit Reason", "Closed"].map(h => (
+                  {["Market", "Exchange", "Side", "Strategy", "Entry", "Exit", "Shares", "PnL", "Exit Reason", "Closed", ""].map(h => (
                     <th key={h} style={styles.th}>{h}</th>
                   ))}
                 </tr>
@@ -281,6 +314,7 @@ export default function HistoryView() {
                 {filtered.map(pos => {
                   const isPos = pos.realized_pnl >= 0;
                   const reason = REASON_LABELS[pos.close_reason] ?? DEFAULT_REASON;
+                  const exch   = EXCHANGE_LABELS[pos.exchange] ?? DEFAULT_EXCHANGE;
                   return (
                     <tr key={pos.id}
                       onClick={() => setSelectedId(id => id === pos.id ? null : pos.id)}
@@ -289,18 +323,23 @@ export default function HistoryView() {
                         background: selectedId === pos.id ? "#0d1a24" : undefined,
                         borderLeft: selectedId === pos.id ? "2px solid #00d4a8" : "2px solid transparent",
                       }}>
-                      <td style={{ ...styles.td, maxWidth: 220 }}>
+                      <td style={{ ...styles.td, maxWidth: 200 }}>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#e8eaf0", fontFamily: "IBM Plex Sans, sans-serif", fontWeight: 500 }}>
                           {pos.market}
                         </div>
                         <div style={{ fontSize: 9, color: "#4a5568", fontFamily: "IBM Plex Mono" }}>{pos.category}</div>
                       </td>
                       <td style={styles.td}>
+                        <span style={{ ...styles.reasonBadge, color: exch.color, borderColor: exch.color + "44", background: exch.color + "15", fontSize: 8 }}>
+                          {exch.label}
+                        </span>
+                      </td>
+                      <td style={styles.td}>
                         <span style={{ ...styles.sideBadge, ...(pos.side === "YES" ? styles.sideYes : styles.sideNo) }}>{pos.side}</span>
                       </td>
                       <td style={{ ...styles.td, color: STRATEGY_COLORS[pos.strategy] || "#8892a4" }}>{pos.strategy}</td>
-                      <td style={{ ...styles.td, color: "#8892a4" }}>{(pos.entry_prob * 100).toFixed(0)}¢</td>
-                      <td style={{ ...styles.td, color: isPos ? "#22c55e" : "#ef4444" }}>{(pos.exit_prob * 100).toFixed(0)}¢</td>
+                      <td style={{ ...styles.td, color: "#8892a4" }}>{fmtPrice(pos.entry_prob, pos.asset_type)}</td>
+                      <td style={{ ...styles.td, color: isPos ? "#22c55e" : "#ef4444" }}>{fmtPrice(pos.exit_prob, pos.asset_type)}</td>
                       <td style={styles.td}>{pos.shares}</td>
                       <td style={{ ...styles.td, color: isPos ? "#22c55e" : "#ef4444", fontWeight: 600 }}>{fmtPnl(pos.realized_pnl)}</td>
                       <td style={styles.td}>
@@ -309,6 +348,15 @@ export default function HistoryView() {
                         </span>
                       </td>
                       <td style={{ ...styles.td, color: "#4a5568" }}>{fmtDate(pos.closed_at)}</td>
+                      <td style={{ ...styles.td, padding: "10px 8px" }}>
+                        <button
+                          onClick={e => handleDelete(pos.id, e)}
+                          disabled={deletingId === pos.id}
+                          title="Delete record"
+                          style={styles.deleteBtn}>
+                          {deletingId === pos.id ? "…" : "✕"}
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -328,14 +376,14 @@ export default function HistoryView() {
               </div>
               <div style={styles.detailGrid}>
                 {[
-                  { label: "Side",      value: selected.side,                               color: selected.side === "YES" ? "#22c55e" : "#ef4444" },
-                  { label: "Strategy",  value: selected.strategy,                           color: STRATEGY_COLORS[selected.strategy] },
-                  { label: "Entry",     value: `${(selected.entry_prob*100).toFixed(0)}¢`,  color: "#e8eaf0" },
-                  { label: "Exit",      value: `${(selected.exit_prob*100).toFixed(0)}¢`,   color: selected.realized_pnl >= 0 ? "#22c55e" : "#ef4444" },
-                  { label: "Shares",    value: selected.shares,                             color: "#e8eaf0" },
-                  { label: "Capital",   value: `$${(selected.entry_prob * selected.shares).toFixed(0)}`, color: "#e8eaf0" },
-                  { label: "Exit Type", value: (REASON_LABELS[selected.close_reason] ?? DEFAULT_REASON).label,  color: (REASON_LABELS[selected.close_reason] ?? DEFAULT_REASON).color },
-                  { label: "Category",  value: selected.category,                           color: "#8892a4" },
+                  { label: "Side",      value: selected.side,                                        color: selected.side === "YES" ? "#22c55e" : "#ef4444" },
+                  { label: "Exchange",  value: (EXCHANGE_LABELS[selected.exchange] ?? DEFAULT_EXCHANGE).label, color: (EXCHANGE_LABELS[selected.exchange] ?? DEFAULT_EXCHANGE).color },
+                  { label: "Strategy",  value: selected.strategy,                                    color: STRATEGY_COLORS[selected.strategy] || "#8892a4" },
+                  { label: "Entry",     value: fmtPrice(selected.entry_prob, selected.asset_type),   color: "#e8eaf0" },
+                  { label: "Exit",      value: fmtPrice(selected.exit_prob, selected.asset_type),    color: selected.realized_pnl >= 0 ? "#22c55e" : "#ef4444" },
+                  { label: "Shares",    value: selected.shares,                                      color: "#e8eaf0" },
+                  { label: "Capital",   value: `$${(selected.entry_prob * selected.shares).toFixed(2)}`, color: "#e8eaf0" },
+                  { label: "Exit Type", value: (REASON_LABELS[selected.close_reason] ?? DEFAULT_REASON).label, color: (REASON_LABELS[selected.close_reason] ?? DEFAULT_REASON).color },
                 ].map((item, i) => (
                   <div key={i} style={styles.detailItem}>
                     <div style={styles.detailLabel}>{item.label}</div>
@@ -551,5 +599,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     fontWeight: 500,
     color: "#e8eaf0",
+  },
+  deleteBtn: {
+    background: "none",
+    border: "1px solid #1e2a35",
+    borderRadius: 2,
+    color: "#4a5568",
+    cursor: "pointer",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 10,
+    padding: "2px 6px",
+    lineHeight: 1,
   },
 };

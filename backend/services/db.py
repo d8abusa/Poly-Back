@@ -189,6 +189,21 @@ def init_db() -> None:
                     read              BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at        TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS strategy_equity (
+                    id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                    strategy            TEXT NOT NULL,
+                    market_id           TEXT NOT NULL,
+                    exchange            TEXT NOT NULL DEFAULT 'coinbase',
+                    initial_capital     REAL NOT NULL DEFAULT 0,
+                    current_equity      REAL NOT NULL DEFAULT 0,
+                    total_realized_pnl  REAL NOT NULL DEFAULT 0,
+                    trade_count         INTEGER NOT NULL DEFAULT 0,
+                    win_count           INTEGER NOT NULL DEFAULT 0,
+                    last_trade_at       TIMESTAMPTZ,
+                    created_at          TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (strategy, market_id)
+                );
             """)
 
             # ── Migrations ────────────────────────────────────────────────────
@@ -381,6 +396,53 @@ def purge_old_records(retention_days: int = 90) -> dict[str, int]:
         deleted["fred_pull_log"] = cur.rowcount
 
     return deleted
+
+
+def record_trade_equity(pos: dict) -> None:
+    """
+    Upsert strategy_equity after a position closes.
+    Tracks running equity per (strategy, market_id) pair.
+    Does NOT influence position sizing yet — controlled by EQUITY_COMPOUNDING_ENABLED.
+    """
+    pnl      = float(pos.get("realized_pnl") or 0.0)
+    capital  = float(pos.get("capital") or 0.0)
+    strategy = pos.get("strategy", "unknown")
+    market_id= pos.get("market_id", "unknown")
+    exchange = pos.get("exchange", "unknown")
+    win      = 1 if pnl > 0 else 0
+    now      = datetime.now(timezone.utc)
+
+    with get_cursor() as cur:
+        cur.execute("""
+            INSERT INTO strategy_equity
+                (id, strategy, market_id, exchange, initial_capital, current_equity,
+                 total_realized_pnl, trade_count, win_count, last_trade_at)
+            VALUES
+                (gen_random_uuid()::text, %(strategy)s, %(market_id)s, %(exchange)s,
+                 %(capital)s, %(capital)s + %(pnl)s, %(pnl)s, 1, %(win)s, %(now)s)
+            ON CONFLICT (strategy, market_id) DO UPDATE SET
+                current_equity     = strategy_equity.current_equity + %(pnl)s,
+                total_realized_pnl = strategy_equity.total_realized_pnl + %(pnl)s,
+                trade_count        = strategy_equity.trade_count + 1,
+                win_count          = strategy_equity.win_count + %(win)s,
+                last_trade_at      = %(now)s
+        """, {
+            "strategy": strategy, "market_id": market_id, "exchange": exchange,
+            "capital": capital, "pnl": pnl, "win": win, "now": now,
+        })
+
+
+def get_strategy_equity() -> list[dict]:
+    """Return all strategy equity rows, ordered by total PnL descending."""
+    with get_cursor() as cur:
+        cur.execute("""
+            SELECT strategy, market_id, exchange, initial_capital, current_equity,
+                   total_realized_pnl, trade_count, win_count, last_trade_at
+            FROM strategy_equity
+            ORDER BY total_realized_pnl DESC
+        """)
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 # Run on import

@@ -70,6 +70,7 @@ class MarketSummary(BaseModel):
 class BacktestRequest(BaseModel):
     condition_id: str
     token_id: str
+    exchange: str = "polymarket"   # which exchange client to use for price history + execution
     strategy: str = "threshold"
     entry_threshold: float = Field(0.30, ge=0.01, le=0.99)
     exit_threshold:  float = Field(0.70, ge=0.01, le=0.99)
@@ -255,6 +256,7 @@ TIER_MIN_HOLD: dict[str, int] = {
 
 class BatchBacktestRequest(BaseModel):
     markets: List[BatchMarketInput]
+    exchange: str = "polymarket"
     strategy: str = "threshold"
     entry_threshold: float = 0.30
     exit_threshold:  float = 0.70

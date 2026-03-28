@@ -32,9 +32,10 @@ const REGIME_COLOR: Record<string, string> = {
 const REGIME_ORDER = ["elevated", "moderate", "low"] as const;
 
 export default function UmapScatter() {
-  const [data, setData]       = useState<UmapData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [data, setData]         = useState<UmapData | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     apiFetch("/api/fred/umap")
@@ -136,60 +137,107 @@ export default function UmapScatter() {
     showlegend: false,
   };
 
+  const chartLayout = {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor:  "rgba(0,0,0,0)",
+    margin:        { t: 20, r: 20, b: 40, l: 40 },
+    xaxis: {
+      title:      { text: "UMAP-1", font: { size: 9, color: "#94a3b8" } },
+      tickfont:   { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
+      gridcolor:  "rgba(255,255,255,0.05)",
+      zeroline:   false,
+    },
+    yaxis: {
+      title:      { text: "UMAP-2", font: { size: 9, color: "#94a3b8" } },
+      tickfont:   { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
+      gridcolor:  "rgba(255,255,255,0.05)",
+      zeroline:   false,
+      scaleanchor: "x",
+    },
+    legend: {
+      x: 1.0, y: 1.0,
+      xanchor:     "right",
+      bgcolor:     "rgba(0,0,0,0)",
+      bordercolor: "rgba(255,255,255,0.08)",
+      borderwidth: 1,
+      font:        { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
+    },
+    hovermode:  "closest",
+    font:       { family: "IBM Plex Mono, monospace", size: 9, color: "#94a3b8" },
+  };
+
+  const plotTraces = [trajectoryTrace, ...groupTraces, latestTrace] as any;
+
+  const header = (
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 4 }}>
+      <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+        UMAP Regime Scatter
+      </span>
+      <button
+        onClick={() => setFullscreen(f => !f)}
+        title={fullscreen ? "Minimize" : "Fullscreen"}
+        style={{
+          background: "none", border: "1px solid var(--border2)", borderRadius: 3,
+          color: "var(--muted)", cursor: "pointer", fontSize: 11, padding: "1px 6px",
+          fontFamily: "IBM Plex Mono, monospace", lineHeight: 1,
+        }}
+      >
+        {fullscreen ? "⊠" : "⛶"}
+      </button>
+    </div>
+  );
+
+  const subtitle = (
+    <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
+      {data.note}<br />
+      Each point = one month · nearby points = similar macro environment · colour = recession risk (yield spread)
+      · dotted line = time trajectory · ○ ring = most recent month
+    </div>
+  );
+
+  const warning = data.n_obs < 12 && (
+    <div style={{ fontSize: 8, color: "#f59e0b", marginTop: 6 }}>
+      ⚠ {data.n_obs} months — UMAP geometry stabilises with more data. Clusters will sharpen as the cache grows.
+    </div>
+  );
+
+  if (fullscreen) {
+    return (
+      <div style={{
+        position: "fixed", inset: 0, zIndex: 9999,
+        background: "var(--bg)", display: "flex", flexDirection: "column",
+        padding: "20px 24px",
+      }}>
+        {header}
+        {subtitle}
+        <Plot
+          data={plotTraces}
+          layout={{ ...chartLayout, autosize: true }}
+          config={{ displayModeBar: true, responsive: true, displaylogo: false,
+            modeBarButtonsToRemove: ["toImage", "sendDataToCloud"] as any }}
+          style={{ width: "100%", flex: 1 }}
+          useResizeHandler
+        />
+        {warning}
+      </div>
+    );
+  }
+
   return (
     <div style={{
       background: "var(--surface2)", border: "1px solid var(--border2)",
       borderRadius: 8, padding: "14px 16px",
     }}>
-      <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
-        UMAP Regime Scatter
-      </div>
-      <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
-        {data.note}<br />
-        Each point = one month · nearby points = similar macro environment · colour = recession risk (yield spread)
-        · dotted line = time trajectory · ○ ring = most recent month
-      </div>
-
+      {header}
+      {subtitle}
       <Plot
-        data={[trajectoryTrace, ...groupTraces, latestTrace] as any}
-        layout={{
-          paper_bgcolor: "rgba(0,0,0,0)",
-          plot_bgcolor:  "rgba(0,0,0,0)",
-          margin:        { t: 20, r: 20, b: 40, l: 40 },
-          xaxis: {
-            title:      { text: "UMAP-1", font: { size: 9, color: "#94a3b8" } },
-            tickfont:   { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
-            gridcolor:  "rgba(255,255,255,0.05)",
-            zeroline:   false,
-          },
-          yaxis: {
-            title:      { text: "UMAP-2", font: { size: 9, color: "#94a3b8" } },
-            tickfont:   { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
-            gridcolor:  "rgba(255,255,255,0.05)",
-            zeroline:   false,
-            scaleanchor: "x",
-          },
-          legend: {
-            x: 1.0, y: 1.0,
-            xanchor:     "right",
-            bgcolor:     "rgba(0,0,0,0)",
-            bordercolor: "rgba(255,255,255,0.08)",
-            borderwidth: 1,
-            font:        { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
-          },
-          hovermode:  "closest",
-          font:       { family: "IBM Plex Mono, monospace", size: 9, color: "#94a3b8" },
-        }}
+        data={plotTraces}
+        layout={chartLayout}
         config={{ displayModeBar: false, responsive: true }}
         style={{ width: "100%", height: 360 }}
         useResizeHandler
       />
-
-      {data.n_obs < 12 && (
-        <div style={{ fontSize: 8, color: "#f59e0b", marginTop: 6 }}>
-          ⚠ {data.n_obs} months — UMAP geometry stabilises with more data. Clusters will sharpen as the cache grows.
-        </div>
-      )}
+      {warning}
     </div>
   );
 }

@@ -8,7 +8,13 @@ interface SignalQueueProps {
 }
 
 export default function SignalQueue({ executionMode }: SignalQueueProps) {
-  const [signals, setSignals] = useState<Signal[]>([]);
+  const [signals, setSignals]   = useState<Signal[]>([]);
+  const [toast, setToast]       = useState<{ msg: string; ok: boolean } | null>(null);
+
+  const showToast = (msg: string, ok = true) => {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 6000);
+  };
 
   const loadSignals = async () => {
     try {
@@ -29,12 +35,30 @@ export default function SignalQueue({ executionMode }: SignalQueueProps) {
   }, []);
 
   const handleApprove = async (signalId: string, modifiedSize?: number) => {
-    await apiFetch(`/api/signals/${signalId}/approve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ modified_size: modifiedSize ?? null }),
-    });
-    setSignals(s => s.filter(x => x.id !== signalId));
+    try {
+      const res = await apiFetch(`/api/signals/${signalId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modified_size: modifiedSize ?? null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(`Order rejected: ${data.detail ?? "unknown error"}`, false);
+        return;
+      }
+      // Show Coinbase order confirmation
+      if (data.exchange === "coinbase" && data.order?.order_id) {
+        showToast(
+          `✓ Coinbase order placed · ${data.shares} units · $${data.size_usd} · ID: ${data.order.order_id.slice(0, 8)}…`,
+          true
+        );
+      } else {
+        showToast("✓ Signal approved", true);
+      }
+      setSignals(s => s.filter(x => x.id !== signalId));
+    } catch (err) {
+      showToast(`Network error: ${err}`, false);
+    }
   };
 
   const handleReject = async (signalId: string) => {
@@ -63,7 +87,21 @@ export default function SignalQueue({ executionMode }: SignalQueueProps) {
         : "Run a backtest to generate signals — they'll appear here for review";
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" }}>
+      {/* Order confirmation toast */}
+      {toast && (
+        <div style={{
+          position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)",
+          zIndex: 50, background: toast.ok ? "#0d2b22" : "#2b0d0d",
+          border: `1px solid ${toast.ok ? "#22c55e55" : "#ef444455"}`,
+          color: toast.ok ? "#22c55e" : "#ef4444",
+          borderRadius: 6, padding: "9px 16px", fontSize: 11,
+          fontFamily: "IBM Plex Mono, monospace", whiteSpace: "nowrap",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
+        }}>
+          {toast.msg}
+        </div>
+      )}
       {/* Header */}
       <div style={{
         padding: "12px 16px", borderBottom: "1px solid var(--border)",

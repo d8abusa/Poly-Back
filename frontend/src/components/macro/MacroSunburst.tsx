@@ -26,9 +26,10 @@ const INTERP_LABEL: Record<string, string> = {
 };
 
 export default function MacroSunburst() {
-  const [data, setData]       = useState<SunburstData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [data, setData]             = useState<SunburstData | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     apiFetch("/api/fred/sunburst")
@@ -71,101 +72,102 @@ export default function MacroSunburst() {
     );
   });
 
+  const toggleBtn = (
+    <button onClick={() => setFullscreen(f => !f)} title={fullscreen ? "Minimize" : "Fullscreen"}
+      style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 3,
+        color: "var(--muted)", cursor: "pointer", fontSize: 11, padding: "1px 6px",
+        fontFamily: "IBM Plex Mono, monospace", lineHeight: 1 }}>
+      {fullscreen ? "⊠" : "⛶"}
+    </button>
+  );
+
+  const stressIndicator = (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ width: 8, height: 8, borderRadius: "50%", background: interpColor, flexShrink: 0 }} />
+      <span style={{ fontSize: 9, color: interpColor, fontFamily: "IBM Plex Mono, monospace" }}>
+        {interpLabel} · {data.overall_stress.toFixed(1)}/100
+      </span>
+    </div>
+  );
+
+  const sunburstPlot = (height: number | string) => (
+    <Plot
+      data={[{
+        type: "sunburst" as const,
+        ids: data.ids, labels: data.labels, parents: data.parents, values: data.values,
+        marker: {
+          colors: data.colors,
+          colorscale: [[0.0,"#14532d"],[0.25,"#166534"],[0.4,"#1e3a5f"],[0.65,"#b45309"],[1.0,"#7f1d1d"]],
+          cmin: 0, cmax: 100, showscale: true,
+          colorbar: { thickness: 12, len: 0.65, tickvals: [0,25,50,75,100],
+            ticktext: ["Benign","Low","Neutral","Moderate","Stressed"],
+            tickfont: { size: 7, color: "#94a3b8", family: "IBM Plex Mono, monospace" } },
+        },
+        branchvalues: "remainder" as const,
+        hovertext: hoverText, hoverinfo: "text" as const,
+        hoverlabel: { bgcolor: "#1e293b", bordercolor: "#38bdf8", font: { size: 9, color: "#e2e8f0", family: "IBM Plex Mono, monospace" } },
+        insidetextfont: { size: 9, color: "#e2e8f0", family: "IBM Plex Mono, monospace" },
+        outsidetextfont: { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
+        leaf: { opacity: 0.88 }, rotation: 90,
+      } as any]}
+      layout={{
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+        margin: { t: 10, r: 100, b: 10, l: 10 },
+        font: { family: "IBM Plex Mono, monospace", size: 9, color: "#94a3b8" },
+        ...(height === "flex" ? { autosize: true } : {}),
+      }}
+      config={{ displayModeBar: height === "flex", responsive: true, displaylogo: false }}
+      style={{ width: "100%", ...(height === "flex" ? { flex: 1 } : { height: height as number }) }}
+      useResizeHandler
+    />
+  );
+
+  const subtitle = (
+    <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
+      Area &amp; colour = stress score (0–100) · red = stressed · green = benign · hover for raw values
+      · inner ring = category avg · outer ring = individual indicators
+    </div>
+  );
+
+  const legend = (
+    <div style={{ display: "flex", gap: 16, marginTop: 6, flexWrap: "wrap" }}>
+      {[{range:"0–40",label:"Benign",color:"#34d399"},{range:"40–65",label:"Moderate",color:"#fbbf24"},{range:"65–100",label:"Stressed",color:"#f87171"}].map(({range,label,color}) => (
+        <div key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
+          <span style={{ fontSize: 7, color: "#94a3b8", fontFamily: "IBM Plex Mono, monospace" }}>{range} — {label}</span>
+        </div>
+      ))}
+      <span style={{ fontSize: 7, color: "#475569", fontFamily: "IBM Plex Mono, monospace", marginLeft: "auto" }}>
+        Minimum cell size = 8 so all indicators remain visible
+      </span>
+    </div>
+  );
+
+  if (fullscreen) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "var(--bg)",
+        display: "flex", flexDirection: "column", padding: "20px 24px" }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 4 }}>
+          <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>Macro Stress Sunburst</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>{stressIndicator}{toggleBtn}</div>
+        </div>
+        {subtitle}
+        {sunburstPlot("flex")}
+        {legend}
+      </div>
+    );
+  }
+
   return (
-    <div style={{
-      background: "var(--surface2)", border: "1px solid var(--border2)",
-      borderRadius: 8, padding: "14px 16px",
-    }}>
-      {/* Header row */}
+    <div style={{ background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "14px 16px" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 4 }}>
-        <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
-          Macro Stress Sunburst
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <div style={{
-            width: 8, height: 8, borderRadius: "50%",
-            background: interpColor, flexShrink: 0,
-          }} />
-          <span style={{ fontSize: 9, color: interpColor, fontFamily: "IBM Plex Mono, monospace" }}>
-            {interpLabel} · {data.overall_stress.toFixed(1)}/100
-          </span>
-        </div>
+        <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>Macro Stress Sunburst</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>{stressIndicator}{toggleBtn}</div>
       </div>
+      {subtitle}
 
-      <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
-        Area &amp; colour = stress score (0–100) · red = stressed · green = benign · hover for raw values
-        · inner ring = category avg · outer ring = individual indicators
-      </div>
-
-      <Plot
-        data={[{
-          type:       "sunburst" as const,
-          ids:        data.ids,
-          labels:     data.labels,
-          parents:    data.parents,
-          values:     data.values,
-          marker: {
-            colors:    data.colors,
-            colorscale: [
-              [0.0,  "#14532d"],   // 0   = no stress — deep green
-              [0.25, "#166534"],
-              [0.4,  "#1e3a5f"],   // 40  = neutral — navy
-              [0.65, "#b45309"],   // 65  = moderate stress — amber
-              [1.0,  "#7f1d1d"],   // 100 = maximum stress — deep red
-            ],
-            cmin:       0,
-            cmax:       100,
-            showscale:  true,
-            colorbar: {
-              thickness: 12,
-              len:       0.65,
-              tickvals:  [0, 25, 50, 75, 100],
-              ticktext:  ["Benign", "Low", "Neutral", "Moderate", "Stressed"],
-              tickfont:  { size: 7, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
-            },
-          },
-          branchvalues: "remainder" as const,
-          hovertext:    hoverText,
-          hoverinfo:    "text" as const,
-          hoverlabel: {
-            bgcolor:     "#1e293b",
-            bordercolor: "#38bdf8",
-            font:        { size: 9, color: "#e2e8f0", family: "IBM Plex Mono, monospace" },
-          },
-          insidetextfont: { size: 9, color: "#e2e8f0", family: "IBM Plex Mono, monospace" },
-          outsidetextfont: { size: 8, color: "#94a3b8", family: "IBM Plex Mono, monospace" },
-          leaf: { opacity: 0.88 },
-          rotation: 90,
-        } as any]}
-        layout={{
-          paper_bgcolor: "rgba(0,0,0,0)",
-          plot_bgcolor:  "rgba(0,0,0,0)",
-          margin:        { t: 10, r: 100, b: 10, l: 10 },
-          font:          { family: "IBM Plex Mono, monospace", size: 9, color: "#94a3b8" },
-        }}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: "100%", height: 400 }}
-        useResizeHandler
-      />
-
-      {/* Stress key */}
-      <div style={{ display: "flex", gap: 16, marginTop: 6, flexWrap: "wrap" }}>
-        {[
-          { range: "0–40",   label: "Benign",   color: "#34d399" },
-          { range: "40–65",  label: "Moderate", color: "#fbbf24" },
-          { range: "65–100", label: "Stressed", color: "#f87171" },
-        ].map(({ range, label, color }) => (
-          <div key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
-            <span style={{ fontSize: 7, color: "#94a3b8", fontFamily: "IBM Plex Mono, monospace" }}>
-              {range} — {label}
-            </span>
-          </div>
-        ))}
-        <span style={{ fontSize: 7, color: "#475569", fontFamily: "IBM Plex Mono, monospace", marginLeft: "auto" }}>
-          Minimum cell size = 8 so all indicators remain visible
-        </span>
-      </div>
+      {sunburstPlot(400)}
+      {legend}
     </div>
   );
 }
