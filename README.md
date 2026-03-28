@@ -4,6 +4,8 @@ A full-stack research and live-execution platform for prediction markets and equ
 
 <img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-45-43" src="https://github.com/user-attachments/assets/10e2fc6c-8c5c-4748-bf6d-a4862c51eccf" />
 <img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-46-09" src="https://github.com/user-attachments/assets/5b3f45ea-fc1f-4e62-bc3e-e3daedbba28c" />
+<img width="2485" height="928" alt="Screenshot From 2026-03-28 10-48-00" src="https://github.com/user-attachments/assets/440c49bf-ffac-4624-bc95-d99d4ccd86f5" />
+
 <img width="2156" height="1007" alt="Screenshot From 2026-03-26 07-46-46" src="https://github.com/user-attachments/assets/28ccd2c7-a016-4504-afd9-2ab3078bb17e" />
 
 ---
