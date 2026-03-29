@@ -64,15 +64,16 @@ class InsiderSignals:
 
 @dataclass
 class InsiderResult:
-    market_id:         str
-    title:             str
-    exchange:          str
-    smart_money_score: float            # 0–100 composite
-    interpretation:    str              # "noise" | "watch" | "elevated" | "strong"
-    signals:           InsiderSignals   = field(default_factory=InsiderSignals)
-    flags:             list[str]        = field(default_factory=list)
-    scanned_at:        str              = ""
-    error:             Optional[str]    = None
+    market_id:            str
+    title:                str
+    exchange:             str
+    smart_money_score:    float            # 0–100 EMA-smoothed composite
+    raw_score:            float            # 0–100 instantaneous composite
+    interpretation:       str              # "noise" | "watch" | "elevated" | "strong"
+    signals:              InsiderSignals   = field(default_factory=InsiderSignals)
+    flags:                list[str]        = field(default_factory=list)
+    scanned_at:           str             = ""
+    error:                Optional[str]   = None
 
     def as_dict(self) -> dict:
         return {
@@ -80,6 +81,8 @@ class InsiderResult:
             "title":             self.title,
             "exchange":          self.exchange,
             "smart_money_score": round(self.smart_money_score, 1),
+            "raw_score":         round(self.raw_score, 1),
+            "score_divergence":  round(self.raw_score - self.smart_money_score, 1),
             "interpretation":    self.interpretation,
             "flags":             self.flags,
             "scanned_at":        self.scanned_at,
@@ -204,6 +207,29 @@ WEIGHTS = {
     "book_thinness":   0.10,
 }
 
+# EMA smoothing — persists across scan cycles, keyed by market_id.
+# α = 0.33 → ~15-min half-life at 5-min scan interval (default for prediction markets).
+# α = 0.50 → ~10-min half-life for equity/crypto (thicker books, faster signal decay).
+_ema_state: dict[str, float] = {}
+
+_ALPHA_DEFAULT = 0.33   # prediction markets — thin books, deliberate accumulation
+_ALPHA_EQUITY  = 0.50   # stocks/crypto — higher liquidity, noise decays faster
+
+_EQUITY_EXCHANGES = {"yahoo", "coinbase"}
+
+
+def _alpha(exchange: str) -> float:
+    return _ALPHA_EQUITY if exchange.lower() in _EQUITY_EXCHANGES else _ALPHA_DEFAULT
+
+
+def _apply_ema(market_id: str, raw: float, exchange: str) -> float:
+    """Apply EMA smoothing. Seeds at raw score on first observation (no cold-start drag)."""
+    α = _alpha(exchange)
+    prev = _ema_state.get(market_id, raw)
+    smoothed = α * raw + (1.0 - α) * prev
+    _ema_state[market_id] = smoothed
+    return smoothed
+
 
 def _interpret(score: float) -> str:
     if score >= 80:
@@ -259,16 +285,18 @@ async def analyse_market(
             WEIGHTS["spread_widening"] * sig.spread_widening +
             WEIGHTS["book_thinness"]   * sig.book_thinness
         )
-        composite = _safe(min(100.0, composite))
+        raw_composite = _safe(min(100.0, composite))
+        smoothed      = _apply_ema(market_id, raw_composite, exchange)
 
-        flags = _build_flags(sig, composite)
+        flags = _build_flags(sig, smoothed)
 
         return InsiderResult(
             market_id=market_id,
             title=title,
             exchange=exchange,
-            smart_money_score=composite,
-            interpretation=_interpret(composite),
+            smart_money_score=smoothed,
+            raw_score=raw_composite,
+            interpretation=_interpret(smoothed),
             signals=sig,
             flags=flags,
             scanned_at=scanned_at,
@@ -281,6 +309,7 @@ async def analyse_market(
             title=title,
             exchange=exchange,
             smart_money_score=0.0,
+            raw_score=0.0,
             interpretation="noise",
             scanned_at=scanned_at,
             error=str(exc),

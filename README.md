@@ -351,6 +351,75 @@ The **Positions** tab includes a per-strategy equity panel showing running PnL, 
 
 ---
 
+## Position PnL Sparkline
+
+Each open position in the positions table shows a 72×20px inline sparkline of its net gain/loss over a rolling 3-day window. History is accumulated in `localStorage` (max one snapshot per minute per position, auto-pruned to 72 hours) and survives page refreshes. New positions start as a flat line and fill in over time. A dashed zero-crossing line appears whenever a position has moved from gain to loss or vice versa.
+
+---
+
+## Insider Detection Scanner
+
+The **Smart Money Scanner** scores markets for informed-flow signals using five independent signals combined into a composite `smart_money_score` (0–100):
+
+| Signal | Weight | What it detects |
+|---|---|---|
+| Book Imbalance | 30% | Bid depth dominating ask depth — directional accumulation |
+| Whale Trade | 25% | Single fill ≥ 33% of recent volume |
+| Price Velocity | 20% | Last 5 candles range >> prior 5 candles baseline |
+| Spread Widening | 15% | Bid-ask spread elevated — liquidity providers stepping back |
+| Book Thinness | 10% | Thin order book — easy for large players to sweep |
+
+**Score interpretation:** 0–30 noise · 30–60 watch · 60–80 elevated · 80–100 strong
+
+**EMA smoothing:** Scores are smoothed across scan cycles using an exponential moving average (α = 0.33 for prediction markets → ~15-min half-life; α = 0.50 for equity/crypto → ~10-min half-life). Both the smoothed score and the raw instantaneous score are returned — a large positive divergence between the two means something just fired that hasn't been confirmed yet. The background scanner runs every 5 minutes.
+
+```bash
+# Trigger a scan
+curl -X POST "https://localhost:8000/api/scanner/insider" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"markets": [...], "exchange": "polymarket", "persist": true}'
+
+# Get last background scan results
+curl "https://localhost:8000/api/scanner/insider/last" -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Strategy Parameter Optimizer
+
+The optimizer uses **Optuna** (TPE sampler, multivariate mode) to find the best strategy parameters for a given market — maximising Sharpe ratio across `n_trials` parallel backtests.
+
+**Supported strategies:** `zscore_reversion`, `mean_reversion`, `kelly`, `momentum`, `threshold`, `swing_reversion`
+
+Each trial is a full `PredictionMarketBacktester` run with the current macro context injected — so optimized params are regime-aware, not just curve-fit to raw price history. A MedianPruner cuts clearly underperforming trials early to avoid wasting CPU.
+
+```bash
+# Optimize zscore_reversion on a market (200 trials, 8 threads)
+curl -X POST "https://localhost:8000/api/backtest/optimize" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "condition_id": "...",
+    "token_id": "...",
+    "exchange": "polymarket",
+    "strategy": "zscore_reversion",
+    "n_trials": 200,
+    "n_jobs": 8
+  }'
+```
+
+Returns `best_params` (ready to drop into a `BacktestRequest`), `best_sharpe`, `best_return`, and a top-10 trials table. Typical runtime: 5–30 seconds depending on history length.
+
+```bash
+# List optimizable strategies and their tunable params
+curl "https://localhost:8000/api/backtest/optimize/strategies" -H "Authorization: Bearer <token>"
+```
+
+> **Overfitting warning:** Optimized params are tuned to the price history provided. Always validate on a held-out window before deploying. The Wizard's multi-window consistency scoring is the intended validation layer.
+
+---
+
 ## API Reference
 
 ### Auth
@@ -368,6 +437,8 @@ The **Positions** tab includes a per-strategy equity panel showing running PnL, 
 | Method | Route | Description |
 |--------|-------|-------------|
 | POST | `/api/backtest/batch` | Batch backtest across multiple markets |
+| POST | `/api/backtest/optimize` | Optuna TPE optimizer — find best params for a strategy |
+| GET | `/api/backtest/optimize/strategies` | List optimizable strategies and their param bounds |
 | GET | `/api/backtest/history` | Saved backtest runs |
 | DELETE | `/api/backtest/history/purge` | Purge runs older than N days |
 
@@ -387,6 +458,15 @@ The **Positions** tab includes a per-strategy equity panel showing running PnL, 
 | POST | `/api/positions/{id}/close` | Close a position |
 | GET | `/api/positions/risk/status` | Circuit breaker status |
 | POST | `/api/positions/risk/kill` | Emergency halt |
+
+### Scanner / Insider
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/scanner/insider` | Score markets for smart-money signals — returns ranked results |
+| GET | `/api/scanner/insider/last` | Last background scan results (no new scan triggered) |
+| POST | `/api/scanner/start` | Start the live strategy scanner |
+| POST | `/api/scanner/stop` | Stop the live strategy scanner |
+| GET | `/api/scanner/status` | Scanner status |
 
 ### FRED / Macro
 | Method | Route | Description |
@@ -432,6 +512,14 @@ These aren't warnings — they're scar tissue. Each one cost real debugging time
 ---
 
 ## Roadmap
+
+### Optimizer UI Panel
+
+Backend is complete. Needs a `OptimizerPanel.tsx` component: strategy selector (data-driven from `/optimize/strategies`), trial/thread count inputs, progress display, and a "Load Params" button that writes `best_params` directly into the backtest sliders.
+
+### Batch Optimize-then-Wizard (Multi-Stock Strategy Hunter)
+
+Pick N stocks, run the optimizer across all strategies for each, then run the Wizard on the optimized params to find the best strategy per ticker in one operation. **Hard requirement:** walk-forward validation must be built in from day one — optimize on `history[:-validation_days]`, evaluate on `history[-validation_days:]`. Without this the results are overfit and misleading.
 
 ### FRASER NLP — Fed Policy Tone Detection
 

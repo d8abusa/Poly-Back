@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -7,6 +9,7 @@ from pydantic import Field
 from ..models.schemas import (
     BacktestRequest, BacktestResult,
     BatchBacktestRequest, BatchBacktestResult,
+    OptimizeRequest, OptimizeResult,
     TIER_MIN_HOLD,
 )
 from ..services.exchange_router import get_exchange_client
@@ -15,6 +18,9 @@ from ..services.macro_context import get_macro_context
 from ..services.fred_prior import calibrate_from_title
 from ..services.db import save_backtest_run, get_backtest_runs, get_backtest_run, purge_old_records
 from ..services.risk_manager import get_config as get_risk_config
+from ..services.optimizer import run_optimization, OptimizeConfig, SEARCH_SPACES
+
+_optimizer_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="optuna")
 
 log = logging.getLogger(__name__)
 
@@ -182,6 +188,123 @@ async def run_backtest_batch(req: BatchBacktestRequest, exchange: str = "polymar
         log.warning("Failed to persist backtest run: %s", exc)
 
     return batch
+
+
+@router.post("/optimize", response_model=OptimizeResult)
+async def optimize_strategy(req: OptimizeRequest):
+    """
+    Find the best parameters for a strategy on a given market using Optuna TPE.
+
+    Fetches the market's price history, then runs `n_trials` backtests in
+    parallel threads to maximise Sharpe ratio. Returns the best parameter set
+    and the top 10 trials.
+
+    Supported strategies: zscore_reversion, mean_reversion, kelly, momentum,
+                          threshold, swing_reversion.
+
+    Typical run time on 8 threads, 200 trials: 5–30 seconds depending on
+    history length and strategy complexity.
+    """
+    if req.strategy not in SEARCH_SPACES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Strategy '{req.strategy}' has no search space. "
+                   f"Supported: {list(SEARCH_SPACES.keys())}",
+        )
+
+    client = get_exchange_client(req.exchange)
+    try:
+        history = await client.get_price_history(
+            req.condition_id, token_id=req.token_id, interval=req.interval
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch price history: {exc}")
+
+    if not history or len(history) < 10:
+        raise HTTPException(status_code=422, detail="Insufficient price history (need ≥ 10 points)")
+
+    # Inject macro context so each trial is gated the same way a live run would be
+    macro_fields: dict = {}
+    try:
+        ctx = get_macro_context()
+        macro_fields = {
+            "macro_zscore_mult":    ctx.zscore_multiplier,
+            "macro_kelly_caution":  ctx.kelly_caution,
+            "macro_features":       ctx.features,
+            "macro_recession_risk": ctx.recession_risk,
+            "macro_fed_stance":     ctx.fed_stance,
+            "macro_inflation":      ctx.inflation_level,
+            "macro_market_fear":    ctx.market_fear,
+            "macro_credit_stress":  ctx.credit_stress,
+        }
+    except Exception:
+        pass  # macro unavailable — trials run without regime gating
+
+    config = OptimizeConfig(
+        condition_id    = req.condition_id,
+        token_id        = req.token_id,
+        strategy        = req.strategy,
+        n_trials        = req.n_trials,
+        n_jobs          = req.n_jobs,
+        initial_capital = req.initial_capital,
+        slippage_bps    = req.slippage_bps,
+        exchange        = req.exchange,
+        interval        = req.interval,
+        date_from       = req.date_from,
+        date_to         = req.date_to,
+        macro_fields    = macro_fields,
+    )
+
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            _optimizer_executor,
+            run_optimization,
+            config,
+            history,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        log.exception("optimizer failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Optimization failed: {exc}")
+
+    # Convert dataclass to Pydantic response model
+    from ..models.schemas import TrialSummary as TrialSummarySchema
+    return OptimizeResult(
+        strategy           = result.strategy,
+        best_params        = result.best_params,
+        best_sharpe        = result.best_sharpe,
+        best_return        = result.best_return,
+        best_win_rate      = result.best_win_rate,
+        best_total_trades  = result.best_total_trades,
+        n_trials_completed = result.n_trials_completed,
+        n_trials_pruned    = result.n_trials_pruned,
+        elapsed_sec        = result.elapsed_sec,
+        top_trials         = [
+            TrialSummarySchema(**{
+                "trial_number": t.trial_number,
+                "sharpe":       t.sharpe,
+                "total_return": t.total_return,
+                "win_rate":     t.win_rate,
+                "total_trades": t.total_trades,
+                "params":       t.params,
+            })
+            for t in result.top_trials
+        ],
+        optuna_available   = result.optuna_available,
+    )
+
+
+@router.get("/optimize/strategies")
+async def list_optimizable_strategies():
+    """Return the list of strategies that have defined search spaces."""
+    return {
+        "strategies": [
+            {"id": sid, "params": list(space.keys())}
+            for sid, space in SEARCH_SPACES.items()
+        ]
+    }
 
 
 @router.get("/history")

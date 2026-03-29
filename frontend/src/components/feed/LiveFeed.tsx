@@ -198,8 +198,11 @@ export default function LiveFeed({ markets, exchange }: LiveFeedProps) {
 
   const filtered = pool.filter(m => {
     if (!search) return true;
-    return m.title.toLowerCase().includes(search.toLowerCase()) ||
-           (m.condition_id ?? "").includes(search);
+    const sl = search.toLowerCase();
+    return m.title.toLowerCase().includes(sl) ||
+           (m.condition_id ?? "").toLowerCase().includes(sl) ||
+           (m.category ?? "").toLowerCase().includes(sl) ||
+           ((m as any).tags ?? []).some((t: string) => t.toLowerCase().includes(sl));
   });
 
   const poll = async (market: Market) => {

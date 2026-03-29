@@ -177,6 +177,47 @@ class BatchMarketInput(BaseModel):
     token_id: str
 
 
+# ── Optimizer ─────────────────────────────────────────────────────────────────
+
+class OptimizeRequest(BaseModel):
+    condition_id:    str
+    token_id:        str
+    exchange:        str   = "polymarket"
+    strategy:        str   = "zscore_reversion"
+    n_trials:        int   = Field(200, ge=10,  le=1000,
+                               description="Total Optuna trials to run")
+    n_jobs:          int   = Field(8,   ge=1,   le=48,
+                               description="Parallel threads (1 = sequential, 48 = all cores)")
+    initial_capital: float = Field(1000.0, gt=0)
+    slippage_bps:    float = Field(5.0, ge=0.0, le=100.0)
+    interval:        str   = "max"
+    date_from:       Optional[str] = None
+    date_to:         Optional[str] = None
+
+
+class TrialSummary(BaseModel):
+    trial_number: int
+    sharpe:       float
+    total_return: float
+    win_rate:     float
+    total_trades: int
+    params:       dict
+
+
+class OptimizeResult(BaseModel):
+    strategy:           str
+    best_params:        dict
+    best_sharpe:        float
+    best_return:        float
+    best_win_rate:      float
+    best_total_trades:  int
+    n_trials_completed: int
+    n_trials_pruned:    int
+    elapsed_sec:        float
+    top_trials:         List[TrialSummary]
+    optuna_available:   bool = True
+
+
 class ExecutionMode(str, Enum):
     auto        = "auto"
     confirm     = "confirm"

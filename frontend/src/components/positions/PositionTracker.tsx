@@ -12,6 +12,77 @@ interface LogEntry {
   msg: string;
 }
 
+// ── PnL history (localStorage, 3-day rolling window) ──────────────────────────
+const PNL_HISTORY_KEY = "polyback_pnl_history";
+const THREE_DAYS_MS   = 3 * 24 * 60 * 60 * 1000;
+
+interface PnlPoint { t: number; pnl: number; }
+type PnlHistory = Record<string, PnlPoint[]>;
+
+function loadPnlHistory(): PnlHistory {
+  try { return JSON.parse(localStorage.getItem(PNL_HISTORY_KEY) ?? "{}"); }
+  catch { return {}; }
+}
+
+function savePnlHistory(h: PnlHistory) {
+  try { localStorage.setItem(PNL_HISTORY_KEY, JSON.stringify(h)); }
+  catch { /* storage full — skip */ }
+}
+
+function appendPnlSnapshot(id: string, pnl: number, history: PnlHistory): PnlHistory {
+  const now    = Date.now();
+  const cutoff = now - THREE_DAYS_MS;
+  const prev   = (history[id] ?? []).filter(p => p.t >= cutoff);
+  // Only append if the last snapshot was > 60s ago (avoid flooding storage)
+  const lastT  = prev.length ? prev[prev.length - 1].t : 0;
+  if (now - lastT < 60_000) return history;
+  return { ...history, [id]: [...prev, { t: now, pnl }] };
+}
+
+function prunePnlHistory(history: PnlHistory, activeIds: Set<string>): PnlHistory {
+  // Remove entries for positions that no longer exist
+  const next: PnlHistory = {};
+  for (const id of activeIds) if (history[id]) next[id] = history[id];
+  return next;
+}
+
+// ── PnL Sparkline ──────────────────────────────────────────────────────────────
+function PnlSparkline({ points }: { points: PnlPoint[] }) {
+  if (points.length < 2) return (
+    <div style={{ width: 72, height: 20, display: "flex", alignItems: "center" }}>
+      <div style={{ width: "100%", height: 1, background: "var(--border2)" }} />
+    </div>
+  );
+
+  const W = 72, H = 20;
+  const pnls  = points.map(p => p.pnl);
+  const min   = Math.min(...pnls);
+  const max   = Math.max(...pnls);
+  const range = max - min || 1;
+
+  const xs = points.map((_, i) => (i / (points.length - 1)) * W);
+  const ys = pnls.map(v => H - ((v - min) / range) * (H - 4) - 2);
+
+  const d = xs.map((x, i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
+  const lastPnl = pnls[pnls.length - 1];
+  const color   = lastPnl >= 0 ? "var(--yes)" : "var(--no)";
+
+  // Zero line
+  const zeroY = H - ((-min) / range) * (H - 4) - 2;
+  const showZero = min < 0 && max > 0;
+
+  return (
+    <svg width={W} height={H} style={{ display: "block", overflow: "visible" }}>
+      {showZero && (
+        <line x1={0} y1={zeroY} x2={W} y2={zeroY}
+          stroke="var(--border2)" strokeWidth={0.5} strokeDasharray="2,2" />
+      )}
+      <path d={d} fill="none" stroke={color} strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={xs[xs.length - 1]} cy={ys[ys.length - 1]} r={2} fill={color} />
+    </svg>
+  );
+}
+
 // ── PnL helpers ────────────────────────────────────────────────────────────────
 function calcPnl(pos: LivePosition): number {
   return pos.side === "YES"
@@ -265,6 +336,7 @@ export default function PositionTracker() {
   const [closingId,  setClosingId]  = useState<string | null>(null);
   const [log,        setLog]        = useState<LogEntry[]>([]);
   const [equity,     setEquity]     = useState<{ compounding_enabled: boolean; equity: any[] }>({ compounding_enabled: false, equity: [] });
+  const [pnlHistory, setPnlHistory] = useState<PnlHistory>(() => loadPnlHistory());
 
   const posRef = useRef(positions);
   posRef.current = positions;
@@ -340,6 +412,20 @@ export default function PositionTracker() {
     liveProb: liveProbs[p.id] ?? p.current_prob,
   }));
 
+  // ── Persist PnL snapshots to localStorage (max 1 per minute per position) ────
+  useEffect(() => {
+    if (livePositions.length === 0) return;
+    setPnlHistory(prev => {
+      let next = prev;
+      livePositions.forEach(p => {
+        next = appendPnlSnapshot(p.id, calcPnl(p), next);
+      });
+      const pruned = prunePnlHistory(next, new Set(livePositions.map(p => p.id)));
+      savePnlHistory(pruned);
+      return pruned;
+    });
+  }, [liveProbs]); // runs whenever prices tick
+
   // ── Filter ────────────────────────────────────────────────────────────────────
   const filtered = livePositions.filter(p => {
     if (filter === "YES")      return p.side === "YES";
@@ -404,7 +490,7 @@ export default function PositionTracker() {
             </div>
           ) : (
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr>{["Market", "Side", "Entry", "Current", "Prob", "Shares", "PnL", "PnL%", "Strategy", ""].map(TH)}</tr></thead>
+              <thead><tr>{["Market", "Side", "Entry", "Current", "Prob", "Shares", "PnL", "Trail", "PnL%", "Strategy", ""].map(TH)}</tr></thead>
               <tbody>
                 {filtered.map(pos => {
                   const pnl   = calcPnl(pos);
@@ -452,6 +538,9 @@ export default function PositionTracker() {
                       </td>
                       <td style={{ padding: "10px 16px", fontFamily: "IBM Plex Mono, monospace", fontSize: 11, fontWeight: 500, color: isPos ? "var(--yes)" : "var(--no)" }}>
                         {fmtPnl(pnl)}
+                      </td>
+                      <td style={{ padding: "6px 16px" }}>
+                        <PnlSparkline points={pnlHistory[pos.id] ?? []} />
                       </td>
                       <td style={{ padding: "10px 16px", fontFamily: "IBM Plex Mono, monospace", fontSize: 11, fontWeight: 500, color: isPos ? "var(--yes)" : "var(--no)" }}>
                         {fmtPct(pct)}
