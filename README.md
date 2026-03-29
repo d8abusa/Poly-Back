@@ -28,6 +28,28 @@ The macro tab is not a signal generator. It's a **gut-check layer** — a calibr
 
 ---
 
+## Application Panels
+
+The nav bar across the top of the UI gives access to thirteen panels. Here is what each one does.
+
+| Panel | What it does |
+|-------|-------------|
+| **Backtest** | Core research tab. Pick markets from the left column, choose a strategy, adjust parameter sliders, and run backtests. Results appear below the chart as a table of equity curves, trade logs, and summary stats. The Wizard sub-strategy runs all long strategies in one pass and surfaces the best performer. |
+| **Optimizer** | Single-market parameter tuner. Select a market from your queue, pick a strategy, set trial count and parallel jobs, then run. Optuna TPE searches the parameter space and returns the best-performing configuration with a ranked trial table. Click **Apply to Backtest** to load the params directly into the Backtest sliders. Both panels include a **?** help button that opens a plain-English guide to every control. |
+| **Batch Wizard** | Multi-market strategy hunter with built-in walk-forward validation. Select N markets and which strategies to test. For each market the optimizer runs on the training window (`history[:-validation_days]`), then evaluates the best params on the held-out validation window (`history[-validation_days:]`). Results show in-sample vs out-of-sample Sharpe side-by-side per strategy, with an overfit score colour-coded green / yellow / red. Click **Apply** on any row to load that strategy and its params into the Backtest tab. |
+| **Signals** | Live signal queue. Backtests that are staged as signals land here. Approve to route the order to the exchange, reject to discard. Execution mode (Confirm / Auto / Alert Only) is set per signal. The log on the right tracks every approval, rejection, and fill. |
+| **Positions** | Open position tracker. Shows entry price, current probability, unrealised PnL, exit target, and stop-loss for every live position. Each row includes a 72×20 px sparkline of 3-day PnL history accumulated in localStorage. |
+| **Trade History** | Full closed-trade log with date, action, price, shares, and realised PnL. Filterable and exportable. |
+| **Strategies** | Strategy catalogue with descriptions, edge explanations, risk notes, and synthetic performance curves for each of the eleven strategies. Click **Use Strategy** on any card to load it into the Backtest tab. |
+| **Feed** | Live market feed showing price, volume, liquidity, and probability delta for all indexed markets on the active exchange. Searchable by title, category, or tag — including crypto ticker symbols. |
+| **Runs** | Saved backtest run history. Every batch backtest is persisted to PostgreSQL and appears here. Click any run to reload the full results into the Backtest view. |
+| **Watchlist** | Price-alert manager. Add markets with threshold triggers — alerts fire when probability crosses the configured level and are surfaced in the notification area. |
+| **Macro** | FRED macro regime dashboard with seven analytical visualizations (radar fingerprint, correlation heatmap, parallel coordinates, 3D surface, correlation network, 3D regime cube, UMAP scatter). See the Macro Regime Visualizations section below for detail. |
+| **Insider** | Smart-money scanner. Scores markets for informed-flow signals using five signals (book imbalance, whale trades, price velocity, spread widening, book thinness) combined into a composite score with EMA smoothing. Background scanner runs every 5 minutes. |
+| **Ops** | Operations panel. Exchange API key management, circuit-breaker status, stop-loss executor controls, and system health. |
+
+---
+
 ## Stack
 
 | Layer | Technology |
@@ -118,6 +140,8 @@ Polymarket/
 │   │   └── settings.py                  # Exchange API key management
 │   ├── services/
 │   │   ├── backtest_engine.py           # All strategy implementations + macro gate
+│   │   ├── optimizer.py                 # Optuna TPE optimizer — single market/strategy
+│   │   ├── batch_wizard.py              # Batch Optimize-then-Wizard with walk-forward split
 │   │   ├── fred_service.py              # FRED API client + PostgreSQL cache
 │   │   ├── macro_context.py             # Regime derivation from FRED cache
 │   │   ├── fred_prior.py                # FRED-calibrated Kelly prior for PM markets
@@ -140,6 +164,8 @@ Polymarket/
         └── components/
             ├── backtest/                # BacktestPanel, Results, ParamSliders,
             │                            #   StrategyControls, BulkLoadModal, ScannerControls
+            ├── optimizer/               # OptimizerPanel (single-market TPE tuner)
+            │                            #   BatchWizardPanel (multi-market walk-forward)
             ├── macro/                   # MacroPanel + 7 visualization components
             │   ├── MacroPanel.tsx       # Regime gauges, time dial, Kelly prior, equity tracker
             │   ├── CorrelationHeatmap.tsx
@@ -448,6 +474,7 @@ curl "https://localhost:8000/api/backtest/optimize/strategies" -H "Authorization
 |--------|-------|-------------|
 | POST | `/api/backtest/batch` | Batch backtest across multiple markets |
 | POST | `/api/backtest/optimize` | Optuna TPE optimizer — find best params for a strategy |
+| POST | `/api/backtest/batch-wizard` | Batch Optimize-then-Wizard with walk-forward validation |
 | GET | `/api/backtest/optimize/strategies` | List optimizable strategies and their param bounds |
 | GET | `/api/backtest/history` | Saved backtest runs |
 | DELETE | `/api/backtest/history/purge` | Purge runs older than N days |
@@ -523,14 +550,6 @@ These aren't warnings — they're scar tissue. Each one cost real debugging time
 
 ## Roadmap
 
-### Optimizer UI Panel
-
-Backend is complete. Needs a `OptimizerPanel.tsx` component: strategy selector (data-driven from `/optimize/strategies`), trial/thread count inputs, progress display, and a "Load Params" button that writes `best_params` directly into the backtest sliders.
-
-### Batch Optimize-then-Wizard (Multi-Stock Strategy Hunter)
-
-Pick N stocks, run the optimizer across all strategies for each, then run the Wizard on the optimized params to find the best strategy per ticker in one operation. **Hard requirement:** walk-forward validation must be built in from day one — optimize on `history[:-validation_days]`, evaluate on `history[-validation_days:]`. Without this the results are overfit and misleading.
-
 ### FRASER NLP — Fed Policy Tone Detection
 
 Mine FOMC transcripts, Beige Book releases, and Fed Chair speeches from the FRASER digital archive for language tone shifts. Detect hawkish/dovish pivot language before it's fully priced in. Feed sentiment score as a signal confidence modifier.
@@ -548,6 +567,13 @@ Phase 4 goal. API key is configured. Needs order routing wired through the signa
 ### 3D Macro Heatmap
 
 Correlate FRED macro indicators with strategy performance over time — axes: time × indicator × value. Will need Three.js or Plotly 3D. Planned after FRASER NLP.
+
+### Completed
+
+| Feature | What shipped |
+|---------|-------------|
+| **Optimizer UI Panel** | `OptimizerPanel.tsx` — single-market Optuna TPE tuner with strategy selector, trial/job controls, results view, top-10 trial table, Apply to Backtest button, and plain-English help modal. |
+| **Batch Optimize-then-Wizard** | `BatchWizardPanel.tsx` + `batch_wizard.py` — multi-market walk-forward optimizer. Splits history at the timestamp boundary, optimises on train, evaluates on val, ranks strategies by OOS Sharpe with overfit score per strategy. |
 
 ---
 
