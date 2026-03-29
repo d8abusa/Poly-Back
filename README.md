@@ -1,6 +1,12 @@
 # PolyBack — Quant Trading Platform
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://react.dev/)
+
 A full-stack research and live-execution platform for prediction markets and equities. Backtest 10+ strategies against historical data, monitor macro regime signals from FRED, stage signals, and route live orders to Polymarket, Kalshi, or Coinbase Advanced Trade.
+
+Open-source under the [MIT License](LICENSE) — free to use, modify, and distribute.
 
 <img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-45-43" src="https://github.com/user-attachments/assets/10e2fc6c-8c5c-4748-bf6d-a4862c51eccf" />
 <img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-46-09" src="https://github.com/user-attachments/assets/5b3f45ec-fc1f-4e62-bc3e-e3daedbba28c" />
@@ -550,3 +556,4 @@ Correlate FRED macro indicators with strategy performance over time — axes: ti
 - `.env` files and `certs/` are gitignored — never commit credentials.
 - Default admin password is `polyback` — change it. The hash goes in `.env` as `ADMIN_PASSWORD_HASH`.
 - UMAP geometry stabilises with more data. The regime scatter sharpens automatically as the cache grows.
+- Released under the [MIT License](LICENSE) — contributions welcome.
