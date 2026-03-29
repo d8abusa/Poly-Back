@@ -11,6 +11,10 @@ Open-source under the [MIT License](LICENSE) — free to use, modify, and distri
 <img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-45-43" src="https://github.com/user-attachments/assets/10e2fc6c-8c5c-4748-bf6d-a4862c51eccf" />
 <img width="2156" height="1007" alt="Screenshot From 2026-03-25 23-46-09" src="https://github.com/user-attachments/assets/5b3f45ec-fc1f-4e62-bc3e-e3daedbba28c" />
 <img width="2156" height="1007" alt="Screenshot From 2026-03-26 07-46-46" src="https://github.com/user-attachments/assets/28ccd2c7-a016-4504-afd9-2ab3078bb17e" />
+<img width="2485" height="928" alt="Screenshot From 2026-03-29 08-06-16" src="https://github.com/user-attachments/assets/f2d59944-af7f-4745-9719-7b62eb9638bb" />
+<img width="2485" height="928" alt="Screenshot From 2026-03-29 08-06-34" src="https://github.com/user-attachments/assets/debc0d8f-78c4-442f-b129-56376a9ca31e" />
+<img width="2485" height="928" alt="Screenshot From 2026-03-29 08-06-16" src="https://github.com/user-attachments/assets/5a6033a9-d2f8-4634-b3b1-cb4133393f26" />
+
 
 ---
 
