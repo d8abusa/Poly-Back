@@ -202,3 +202,26 @@ export interface HistoryRun {
   marketTitles: string[];
   batch: BatchBacktestResult;
 }
+
+export interface TrialSummary {
+  trial_number: number;
+  sharpe:       number;
+  total_return: number;
+  win_rate:     number;
+  total_trades: number;
+  params:       Record<string, number>;
+}
+
+export interface OptimizeResult {
+  strategy:           string;
+  best_params:        Record<string, number>;
+  best_sharpe:        number;
+  best_return:        number;
+  best_win_rate:      number;
+  best_total_trades:  number;
+  n_trials_completed: number;
+  n_trials_pruned:    number;
+  elapsed_sec:        number;
+  top_trials:         TrialSummary[];
+  optuna_available:   boolean;
+}
