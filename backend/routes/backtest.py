@@ -11,7 +11,9 @@ from ..models.schemas import (
     BatchBacktestRequest, BatchBacktestResult,
     OptimizeRequest, OptimizeResult,
     TIER_MIN_HOLD,
+    BatchWizardRequest, BatchWizardResult,
 )
+from ..services.batch_wizard import run_batch_wizard
 from ..services.exchange_router import get_exchange_client
 from ..services.backtest_engine import PredictionMarketBacktester, run_batch
 from ..services.macro_context import get_macro_context
@@ -334,3 +336,53 @@ async def purge_history(retention_days: int = 90):
         return {"deleted": counts, "retention_days": retention_days}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+_wizard_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bwizard")
+
+
+@router.post("/batch-wizard", response_model=BatchWizardResult)
+async def run_batch_optimize_wizard(req: BatchWizardRequest):
+    """
+    Batch Optimize-then-Wizard with walk-forward validation.
+
+    For each market:
+    1. Split history: train = all except last `validation_days` calendar days,
+                     val   = last `validation_days` calendar days.
+    2. Optimise every requested strategy on the TRAIN window using Optuna TPE.
+    3. Evaluate the best params on the VAL window (out-of-sample).
+    4. Rank strategies by OOS Sharpe ratio.
+
+    Walk-forward split prevents in-sample overfitting — results reflect
+    how the optimised params actually perform on unseen data.
+
+    Typical run time: 30s–5min depending on number of markets x strategies x trials.
+    """
+    if not req.markets:
+        raise HTTPException(status_code=400, detail="markets list is empty")
+
+    client = get_exchange_client(req.exchange)
+    market_ids = [m.condition_id for m in req.markets]
+    token_ids  = [m.token_id     for m in req.markets]
+
+    try:
+        histories, _ = await client.fetch_market_histories_batch(
+            market_ids, token_ids=token_ids, interval=req.interval
+        )
+    except Exception as exc:
+        log.exception("batch_wizard: fetch failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Price history fetch failed: {exc}")
+
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            _wizard_executor,
+            run_batch_wizard,
+            req,
+            histories,
+        )
+    except Exception as exc:
+        log.exception("batch_wizard failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Batch wizard failed: {exc}")
+
+    return result

@@ -225,3 +225,38 @@ export interface OptimizeResult {
   top_trials:         TrialSummary[];
   optuna_available:   boolean;
 }
+
+export interface StrategyOOSResult {
+  strategy:      string;
+  best_params:   Record<string, number>;
+  train_sharpe:  number;
+  train_return:  number;
+  oos_sharpe:    number;
+  oos_return:    number;
+  oos_win_rate:  number;
+  oos_trades:    number;
+  overfit_score: number;
+}
+
+export interface MarketWizardResult {
+  condition_id:     string;
+  market_title:     string;
+  train_points:     number;
+  val_points:       number;
+  train_days:       number;
+  validation_days:  number;
+  strategy_results: StrategyOOSResult[];
+  best_strategy:    string;
+  best_oos_sharpe:  number;
+  best_oos_return:  number;
+  error?:           string;
+}
+
+export interface BatchWizardResult {
+  total:           number;
+  succeeded:       number;
+  failed:          number;
+  elapsed_sec:     number;
+  validation_days: number;
+  results:         MarketWizardResult[];
+}

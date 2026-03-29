@@ -369,3 +369,64 @@ class BatchBacktestResult(BaseModel):
     failed: int
     fetch_duration_ms: float
     results: List[BacktestResult]
+
+
+# ── Batch Optimize-then-Wizard ────────────────────────────────────────────────
+
+class WizardMarketInput(BaseModel):
+    condition_id: str
+    token_id: str
+    title: str = ""
+
+
+class StrategyOOSResult(BaseModel):
+    strategy:      str
+    best_params:   dict
+    train_sharpe:  float
+    train_return:  float
+    oos_sharpe:    float
+    oos_return:    float
+    oos_win_rate:  float
+    oos_trades:    int
+    overfit_score: float   # train_sharpe - oos_sharpe; higher means more overfit
+
+
+class MarketWizardResult(BaseModel):
+    condition_id:     str
+    market_title:     str
+    train_points:     int
+    val_points:       int
+    train_days:       int
+    validation_days:  int
+    strategy_results: List[StrategyOOSResult]   # sorted by oos_sharpe desc
+    best_strategy:    str
+    best_oos_sharpe:  float
+    best_oos_return:  float
+    error:            Optional[str] = None
+
+
+class BatchWizardRequest(BaseModel):
+    markets:         List[WizardMarketInput]
+    exchange:        str   = "polymarket"
+    strategies:      List[str] = Field(default_factory=list,
+                         description="Strategies to optimise; empty = all in SEARCH_SPACES")
+    n_trials:        int   = Field(50,    ge=10,  le=500,
+                         description="Optuna trials per strategy per market")
+    n_jobs:          int   = Field(2,     ge=1,   le=32,
+                         description="Parallel threads inside each optimizer run")
+    initial_capital: float = Field(1000.0, gt=0)
+    slippage_bps:    float = Field(5.0,   ge=0.0, le=100.0)
+    interval:        str   = "max"
+    validation_days: int   = Field(90,    ge=14,  le=365,
+                         description="Calendar days held out for OOS evaluation")
+    date_from:       Optional[str] = None
+    date_to:         Optional[str] = None
+
+
+class BatchWizardResult(BaseModel):
+    total:           int
+    succeeded:       int
+    failed:          int
+    elapsed_sec:     float
+    validation_days: int
+    results:         List[MarketWizardResult]

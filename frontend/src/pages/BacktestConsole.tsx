@@ -22,6 +22,7 @@ import MacroPanel from "../components/macro/MacroPanel";
 import OpsPanel from "../components/ops/OpsPanel";
 import InsiderPanel from "../components/scanner/InsiderPanel";
 import OptimizerPanel from "../components/optimizer/OptimizerPanel";
+import BatchWizardPanel from "../components/optimizer/BatchWizardPanel";
 import { apiFetch, clearToken } from "../lib/apiFetch";
 
 // ── BacktestConsole — owns ALL shared state ────────────────────────────────────
@@ -63,7 +64,7 @@ export default function BacktestConsole() {
   // ── Capital + execution mode + view ──────────────────────────────────────────
   const [capital, setCapital] = useState<number>(0);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("confirm");
-  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed" | "runs" | "watchlist" | "macro" | "ops" | "insider" | "optimizer">("backtest");
+  const [view, setView] = useState<"backtest" | "signals" | "positions" | "history" | "strategies" | "feed" | "runs" | "watchlist" | "macro" | "ops" | "insider" | "optimizer" | "bwizard">("backtest");
 
   // ── Toast ────────────────────────────────────────────────────────────────────
   const [toastMsg, setToastMsg] = useState("");
@@ -400,9 +401,10 @@ export default function BacktestConsole() {
               </span>
             )}
             {/* View nav */}
-            {(["backtest", "optimizer", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist", "macro", "insider", "ops"] as const).map(v => {
+            {(["backtest", "optimizer", "bwizard", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist", "macro", "insider", "ops"] as const).map(v => {
               const labels: Record<string, string> = {
-                backtest: "Backtest", optimizer: "Optimizer", signals: "Signals", positions: "Positions",
+                backtest: "Backtest", optimizer: "Optimizer", bwizard: "Batch Wizard",
+                signals: "Signals", positions: "Positions",
                 history: "Trade History", strategies: "Strategies", feed: "Feed", runs: "Runs", watchlist: "Watchlist",
                 macro: "Macro", insider: "Insider", ops: "Ops",
               };
@@ -590,6 +592,19 @@ export default function BacktestConsole() {
         ) : view === "optimizer" ? (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
             <OptimizerPanel
+              queuedMarkets={queuedMarkets}
+              exchange={exchange}
+              capital={capital}
+              onApplyParams={(strategy, params) => {
+                setActiveStrategy(strategy);
+                setStrategyParams(p => ({ ...p, ...params }));
+                setView("backtest");
+              }}
+            />
+          </div>
+        ) : view === "bwizard" ? (
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <BatchWizardPanel
               queuedMarkets={queuedMarkets}
               exchange={exchange}
               capital={capital}
