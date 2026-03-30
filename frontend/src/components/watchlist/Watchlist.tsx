@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   getWatchlist, addWatchlistItem, removeWatchlistItem,
   getAlerts, createAlert, dismissAlert, markAlertRead,
 } from "../../api/watchlistClient";
 import type { AlertTrigger } from "../../api/watchlistClient";
+import { apiFetch } from "../../lib/apiFetch";
 
 interface WatchlistItem {
   id: string;
@@ -44,6 +45,14 @@ export default function Watchlist() {
   const [newTitle, setNewTitle]             = useState("");
   const [newCat, setNewCat]                 = useState("Other");
 
+  // Market search inside the add dialog
+  const [searchExchange, setSearchExchange] = useState<"kalshi"|"coinbase"|"yahoo"|"polymarket">("kalshi");
+  const [searchQuery, setSearchQuery]       = useState("");
+  const [searchResults, setSearchResults]   = useState<{id:string;condition_id:string|null;title:string;category:string}[]>([]);
+  const [searchLoading, setSearchLoading]   = useState(false);
+  const [showDropdown, setShowDropdown]     = useState(false);
+  const searchTimer                         = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Alert dialog
   const [showAlert, setShowAlert]           = useState(false);
   const [alertThreshold, setAlertThreshold] = useState("");
@@ -72,11 +81,43 @@ export default function Watchlist() {
 
   useEffect(() => { load(); }, []);
 
+  // Live market search inside the add dialog
+  useEffect(() => {
+    if (!showAdd) return;
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (!searchQuery.trim()) { setSearchResults([]); setShowDropdown(false); return; }
+    setSearchLoading(true);
+    searchTimer.current = setTimeout(() => {
+      apiFetch(`/api/markets?q=${encodeURIComponent(searchQuery)}&exchange=${searchExchange}&limit=20`)
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(data => {
+          setSearchResults(data.markets ?? []);
+          setShowDropdown(true);
+        })
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearchLoading(false));
+    }, 380);
+  }, [searchQuery, searchExchange, showAdd]);
+
+  function resetAddDialog() {
+    setShowAdd(false);
+    setNewId(""); setNewTitle(""); setNewCat("Other");
+    setSearchQuery(""); setSearchResults([]); setShowDropdown(false);
+  }
+
+  function selectSearchResult(m: {id:string;condition_id:string|null;title:string;category:string}) {
+    setNewId(m.condition_id ?? m.id);
+    setNewTitle(m.title);
+    setNewCat(m.category || "Other");
+    setSearchQuery(m.title);
+    setShowDropdown(false);
+  }
+
   async function handleAdd() {
     if (!newId.trim() || !newTitle.trim()) return;
     try {
       await addWatchlistItem({ market_id: newId.trim(), market_title: newTitle.trim(), category: newCat });
-      setShowAdd(false); setNewId(""); setNewTitle(""); setNewCat("Other");
+      resetAddDialog();
       showToast("Added to watchlist");
       load();
     } catch { showToast("Failed to add"); }
@@ -339,35 +380,119 @@ export default function Watchlist() {
       {/* ── Add market dialog ── */}
       {showAdd && (
         <>
-          <div onClick={() => setShowAdd(false)} style={{ position: "fixed", inset: 0, zIndex: 49, background: "rgba(0,0,0,0.5)" }} />
+          <div onClick={resetAddDialog} style={{ position: "fixed", inset: 0, zIndex: 49, background: "rgba(0,0,0,0.5)" }} />
           <div style={{
             position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
             background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 10,
-            padding: "20px 22px", width: 360, zIndex: 50, boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
+            padding: "20px 22px", width: 400, zIndex: 50, boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
           }}>
             <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 13, marginBottom: 14 }}>
               Add to Watchlist
             </div>
-            {([
-              { label: "Market ID", value: newId, set: setNewId, placeholder: "e.g. 0x1a2b…" },
-              { label: "Title", value: newTitle, set: setNewTitle, placeholder: "e.g. Will BTC reach $100k?" },
-            ] as const).map(f => (
-              <div key={f.label} style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{f.label}</div>
+
+            {/* Exchange picker */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Exchange</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {(["kalshi", "coinbase", "yahoo", "polymarket"] as const).map(ex => {
+                  const labels: Record<string, string> = { kalshi: "Kalshi", coinbase: "Coinbase", yahoo: "Stocks", polymarket: "Polymarket" };
+                  const active = searchExchange === ex;
+                  return (
+                    <button key={ex} onClick={() => { setSearchExchange(ex); setSearchQuery(""); setNewId(""); setNewTitle(""); setSearchResults([]); setShowDropdown(false); }} style={{
+                      flex: 1, padding: "4px 0", borderRadius: 4, cursor: "pointer",
+                      fontFamily: "IBM Plex Mono, monospace", fontSize: 9,
+                      border: `1px solid ${active ? "rgba(0,212,168,0.4)" : "var(--border2)"}`,
+                      background: active ? "rgba(0,212,168,0.08)" : "var(--surface2)",
+                      color: active ? "var(--accent)" : "var(--muted2)",
+                      fontWeight: active ? 700 : 400,
+                    }}>{labels[ex]}</button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Search box */}
+            <div style={{ marginBottom: 12, position: "relative" }}>
+              <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+                Search {searchExchange === "yahoo" ? "by ticker or company name" : "by market title or keyword"}
+              </div>
+              <div style={{ position: "relative" }}>
                 <input
-                  value={f.value}
-                  onChange={e => f.set(e.target.value)}
-                  placeholder={f.placeholder}
+                  autoFocus
+                  value={searchQuery}
+                  onChange={e => { setSearchQuery(e.target.value); setNewId(""); setNewTitle(""); }}
+                  placeholder={searchExchange === "yahoo" ? "e.g. NVDA, Apple, SPY…" : "e.g. Fed rate, Bitcoin, election…"}
                   style={{
-                    width: "100%", background: "var(--surface2)", border: "1px solid var(--border2)",
-                    borderRadius: 5, padding: "7px 10px", color: "var(--text)",
-                    fontFamily: "IBM Plex Mono, monospace", fontSize: 11, outline: "none",
-                    boxSizing: "border-box",
+                    width: "100%", background: "var(--surface2)", border: `1px solid ${newId ? "rgba(0,212,168,0.4)" : "var(--border2)"}`,
+                    borderRadius: 5, padding: "7px 34px 7px 10px", color: "var(--text)",
+                    fontFamily: "IBM Plex Mono, monospace", fontSize: 11, outline: "none", boxSizing: "border-box",
                   }}
                 />
+                {searchLoading && (
+                  <div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: "var(--muted)" }}>
+                    ◌
+                  </div>
+                )}
+                {newId && !searchLoading && (
+                  <div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "var(--accent)" }}>
+                    ✓
+                  </div>
+                )}
               </div>
-            ))}
-            <div style={{ marginBottom: 14 }}>
+
+              {/* Results dropdown */}
+              {showDropdown && searchResults.length > 0 && (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 60,
+                  background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 6,
+                  maxHeight: 220, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                }}>
+                  {searchResults.map(m => (
+                    <div
+                      key={m.id}
+                      onClick={() => selectSearchResult(m)}
+                      style={{
+                        padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid var(--border)",
+                        transition: "background 0.1s",
+                      }}
+                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "rgba(0,212,168,0.05)"}
+                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}
+                    >
+                      <div style={{ fontSize: 11, color: "var(--text)", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {m.title}
+                      </div>
+                      <div style={{ fontSize: 9, color: "var(--muted)", fontFamily: "IBM Plex Mono" }}>
+                        {m.category}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {showDropdown && searchResults.length === 0 && !searchLoading && searchQuery.trim() && (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 60,
+                  background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 6,
+                  padding: "12px", fontSize: 10, color: "var(--muted)", textAlign: "center",
+                }}>
+                  No markets found — try a different term
+                </div>
+              )}
+            </div>
+
+            {/* Selected market confirmation */}
+            {newId && (
+              <div style={{
+                marginBottom: 12, padding: "8px 10px", borderRadius: 5,
+                background: "rgba(0,212,168,0.06)", border: "1px solid rgba(0,212,168,0.2)",
+                fontSize: 10, color: "var(--text)",
+              }}>
+                <span style={{ color: "var(--muted)", marginRight: 6 }}>Selected:</span>
+                {newTitle}
+              </div>
+            )}
+
+            {/* Category override */}
+            <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Category</div>
               <select
                 value={newCat}
@@ -381,9 +506,10 @@ export default function Watchlist() {
                 {CATEGORIES.filter(c => c !== "All").map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
+
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button onClick={() => setShowAdd(false)} style={{ padding: "6px 14px", borderRadius: 5, cursor: "pointer", border: "1px solid var(--border2)", background: "var(--surface2)", color: "var(--muted2)", fontFamily: "IBM Plex Mono", fontSize: 10 }}>Cancel</button>
-              <button onClick={handleAdd} disabled={!newId.trim() || !newTitle.trim()} style={{ padding: "6px 14px", borderRadius: 5, cursor: "pointer", border: "1px solid rgba(0,212,168,0.35)", background: "rgba(0,212,168,0.1)", color: "var(--accent)", fontFamily: "IBM Plex Mono", fontSize: 10, fontWeight: 600 }}>Add</button>
+              <button onClick={resetAddDialog} style={{ padding: "6px 14px", borderRadius: 5, cursor: "pointer", border: "1px solid var(--border2)", background: "var(--surface2)", color: "var(--muted2)", fontFamily: "IBM Plex Mono", fontSize: 10 }}>Cancel</button>
+              <button onClick={handleAdd} disabled={!newId.trim() || !newTitle.trim()} style={{ padding: "6px 14px", borderRadius: 5, cursor: "pointer", border: "1px solid rgba(0,212,168,0.35)", background: !newId.trim() ? "transparent" : "rgba(0,212,168,0.1)", color: !newId.trim() ? "var(--muted)" : "var(--accent)", fontFamily: "IBM Plex Mono", fontSize: 10, fontWeight: 600, cursor: !newId.trim() ? "not-allowed" : "pointer" }}>Add</button>
             </div>
           </div>
         </>
