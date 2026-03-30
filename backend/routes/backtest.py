@@ -120,7 +120,7 @@ async def run_backtest_batch(req: BatchBacktestRequest, exchange: str = "polymar
         if req.stop_loss is None:
             default_sl = (
                 _rcfg.get("default_stop_loss_pm", 0.10)
-                if effective_exchange != "yahoo"
+                if effective_exchange not in ("yahoo", "robinhood")
                 else _rcfg.get("default_stop_loss", 0.08)
             )
             raise HTTPException(
@@ -149,14 +149,14 @@ async def run_backtest_batch(req: BatchBacktestRequest, exchange: str = "polymar
     # Stocks: enforce a per-tier minimum hold to avoid whipsaw re-entries.
     # Standard = 3d (cash account settlement), Margin = 2d, DayTrading = 1d.
     # Prediction markets have no settlement constraint so min_hold stays 1.
-    if effective_exchange == "yahoo":
+    if effective_exchange in ("yahoo", "robinhood"):
         min_hold = TIER_MIN_HOLD.get(req.account_tier, 3)
     else:
         min_hold = 1
     log.info("account_tier=%s min_hold=%d exchange=%s", req.account_tier, min_hold, effective_exchange)
 
     from datetime import date, timedelta
-    if effective_exchange == "yahoo" and not req.date_from and not req.date_to:
+    if effective_exchange in ("yahoo", "robinhood") and not req.date_from and not req.date_to:
         effective_date_from = (date.today() - timedelta(days=365)).isoformat()
         effective_date_to   = date.today().isoformat()
     else:

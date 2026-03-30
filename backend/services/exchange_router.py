@@ -7,7 +7,7 @@ Note: polymarket is geoblocked for US users — requests fall back to kalshi.
 from .base_client import BaseExchangeClient
 
 
-SUPPORTED_EXCHANGES = ["kalshi", "coinbase", "manifold", "yahoo"]
+SUPPORTED_EXCHANGES = ["kalshi", "coinbase", "manifold", "yahoo", "robinhood"]
 DEFAULT_EXCHANGE    = "kalshi"
 
 
@@ -30,6 +30,10 @@ def get_exchange_client(exchange: str = DEFAULT_EXCHANGE) -> BaseExchangeClient:
     if exchange == "manifold":
         from .manifold_client import get_manifold_client
         return get_manifold_client()
+
+    if exchange == "robinhood":
+        from .robinhood_client import get_robinhood_client
+        return get_robinhood_client()
 
     # Polymarket geoblocked for US users — redirect to Kalshi
     if exchange == "polymarket":

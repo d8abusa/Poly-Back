@@ -56,7 +56,7 @@ function pct(v: number | null, mode: PriceMode = 'prob') {
 }
 
 function priceMode(exchange: string): PriceMode {
-  if (exchange === 'yahoo')    return 'stock';
+  if (exchange === 'yahoo' || exchange === 'robinhood') return 'stock';
   if (exchange === 'coinbase') return 'crypto';
   return 'prob';
 }
@@ -186,7 +186,7 @@ export default function LiveFeed({ markets, exchange }: LiveFeedProps) {
 
   // Fetch active markets independently for the feed (not applicable for Yahoo)
   useEffect(() => {
-    if (exchange === "yahoo") { setActiveMarkets([]); return; }
+    if (exchange === "yahoo" || exchange === "robinhood") { setActiveMarkets([]); return; }
     apiFetch(`/api/markets?limit=100&order=volumeNum&active=true&closed=false&exchange=${exchange}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => d?.markets && setActiveMarkets(d.markets))
@@ -194,7 +194,7 @@ export default function LiveFeed({ markets, exchange }: LiveFeedProps) {
   }, [exchange]);
 
   // Yahoo doesn't have an active/inactive distinction — always use the full list
-  const pool = exchange === "yahoo" ? markets : (showActive ? activeMarkets : markets);
+  const pool = (exchange === "yahoo" || exchange === "robinhood") ? markets : (showActive ? activeMarkets : markets);
 
   const filtered = pool.filter(m => {
     if (!search) return true;

@@ -237,7 +237,7 @@ export default function BacktestConsole() {
           initial_capital: capital,
           interval: "max",
           execution_mode: executionMode,
-          account_tier: exchange === "yahoo" ? accountTier : "standard",
+          account_tier: (exchange === "yahoo" || exchange === "robinhood") ? accountTier : "standard",
           ...(dateFrom ? { date_from: dateFrom } : {}),
           ...(dateTo   ? { date_to:   dateTo   } : {}),
         }),
@@ -322,9 +322,9 @@ export default function BacktestConsole() {
 
           {/* Exchange selector */}
           <div style={{ display: "flex", gap: 2, marginLeft: 8 }}>
-            {(["kalshi", "coinbase", "yahoo", "polymarket"] as const).map(ex => {
-              const labels: Record<string, string> = { kalshi: "Kalshi", coinbase: "Coinbase", yahoo: "Stocks", polymarket: "Polymarket" };
-              const colors: Record<string, string> = { kalshi: "#3b82f6", coinbase: "#0052ff", yahoo: "#22c55e", polymarket: "#00d4a8" };
+            {(["kalshi", "coinbase", "yahoo", "robinhood", "polymarket"] as const).map(ex => {
+              const labels: Record<string, string> = { kalshi: "Kalshi", coinbase: "Coinbase", yahoo: "Stocks", robinhood: "Robinhood", polymarket: "Polymarket" };
+              const colors: Record<string, string> = { kalshi: "#3b82f6", coinbase: "#0052ff", yahoo: "#22c55e", robinhood: "#00c805", polymarket: "#00d4a8" };
               const active = exchange === ex;
               return (
                 <button
@@ -347,7 +347,7 @@ export default function BacktestConsole() {
           </div>
 
           {/* Account tier selector — stocks only */}
-          {exchange === "yahoo" && (() => {
+          {(exchange === "yahoo" || exchange === "robinhood") && (() => {
             const tiers: { id: AccountTier; label: string; desc: string }[] = [
               { id: "standard",    label: "Standard",    desc: "3-day min hold (cash account)" },
               { id: "margin",      label: "Margin",      desc: "2-day min hold (margin account)" },
@@ -481,9 +481,9 @@ export default function BacktestConsole() {
               queuedMarkets={queuedMarkets}
               onSelectMarket={handleSelectMarket}
               onToggleQueue={handleToggleQueue}
-              liveSearch={exchange === "yahoo"}
+              liveSearch={exchange === "yahoo" || exchange === "robinhood"}
               onLiveSearch={handleLiveSearch}
-              onRefresh={exchange === "yahoo" ? () => setRefreshTick(t => t + 1) : undefined}
+              onRefresh={(exchange === "yahoo" || exchange === "robinhood") ? () => setRefreshTick(t => t + 1) : undefined}
             />
 
             {/* Right: detail + backtest */}
