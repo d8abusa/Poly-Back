@@ -47,6 +47,14 @@ def _infer_exchange(market_id: str) -> str:
     return "kalshi"  # default for prediction markets
 
 
+def _is_kalshi_signal(sig) -> bool:
+    """True when the signal should execute on Kalshi."""
+    return (sig.exchange == "kalshi") or (
+        sig.exchange in ("polymarket", "")
+        and not _is_coinbase_signal(sig.market_id)
+    )
+
+
 def _asset_type(exchange: str) -> str:
     if exchange == "yahoo":
         return "stock"
@@ -252,7 +260,56 @@ async def approve_signal(
             "size_usd":   size_usd,
         }
 
-    # ── Prediction market signal → existing flow ───────────────────────────
+    # ── Kalshi prediction market signal → place real order ────────────────
+    if _is_kalshi_signal(sig):
+        client = get_exchange_client("kalshi")
+
+        size_usd  = float(body.modified_size or sig.suggested_size)
+        # Probability → cents (1–99); contracts = USD / cost-per-contract
+        yes_price = max(1, min(99, int(round(sig.entry_price * 100))))
+        count     = max(1, int(size_usd / sig.entry_price))
+        action    = "buy" if sig.side.upper() == "BUY" else "sell"
+        # Signals always trade YES side (long bias on prediction markets)
+        kal_side  = "yes"
+
+        try:
+            order = await client.place_order(
+                ticker=sig.market_id,
+                side=kal_side,
+                action=action,
+                count=count,
+                yes_price=yes_price,
+                order_type="limit",
+            )
+        except Exception as exc:
+            log.error("Kalshi order failed for signal %s: %s", signal_id, exc)
+            raise HTTPException(status_code=502, detail=f"Kalshi order failed: {exc}")
+
+        if order.get("status") != "submitted":
+            log.error("Kalshi order rejected for signal %s: %s", signal_id, order.get("note"))
+            raise HTTPException(
+                status_code=502,
+                detail=f"Kalshi order rejected: {order.get('note', 'unknown error')}",
+            )
+
+        sig = sq.approve_signal(signal_id, modified_size=body.modified_size)
+        pos = pt.open_position(sig, exchange="kalshi")
+        log.info(
+            "Kalshi order placed: %s %s %s %dct @ %d¢  order_id=%s  pos=%s",
+            sig.market_id, action, kal_side, count, yes_price,
+            order.get("order_id", "?"), pos["id"],
+        )
+        return {
+            "status":      "approved",
+            "exchange":    "kalshi",
+            "signal":      sig,
+            "position_id": pos["id"],
+            "order":       order,
+            "contracts":   count,
+            "yes_price":   yes_price,
+        }
+
+    # ── Generic fallthrough (manifold / unknown) ───────────────────────────
     sig = sq.approve_signal(signal_id, modified_size=body.modified_size)
     pos = pt.open_position(sig, exchange=_infer_exchange(sig.market_id))
     log.info("Approved signal %s  size=%d  position=%s", signal_id, sig.suggested_size, pos["id"])

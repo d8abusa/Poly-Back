@@ -75,9 +75,27 @@ async def cancel_order(order_id: str) -> dict:
 
 
 async def _submit_to_clob(signal: SignalSchema) -> dict:
-    """Submit order via the active exchange (Coinbase by default)."""
+    """Submit order via the correct exchange for this signal."""
     from .exchange_router import get_exchange_client
-    client = get_exchange_client()
+
+    exchange = getattr(signal, "exchange", None) or "kalshi"
+
+    if exchange == "kalshi":
+        client = get_exchange_client("kalshi")
+        yes_price = max(1, min(99, int(round(signal.entry_price * 100))))
+        count     = max(1, int(float(signal.suggested_size) / signal.entry_price))
+        action    = "buy" if signal.side.upper() == "BUY" else "sell"
+        return await client.place_order(
+            ticker=signal.market_id,
+            side="yes",
+            action=action,
+            count=count,
+            yes_price=yes_price,
+            order_type="limit",
+        )
+
+    # Coinbase / Robinhood / Yahoo — standard product_id / size interface
+    client = get_exchange_client(exchange)
     return await client.place_order(
         product_id=signal.market_id,
         side=signal.side.upper(),
