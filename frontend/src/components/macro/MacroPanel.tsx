@@ -6,6 +6,9 @@ import CorrelationNetwork from "./CorrelationNetwork";
 import CubeHeatmap from "./CubeHeatmap";
 import UmapScatter from "./UmapScatter";
 import MacroSunburst from "./MacroSunburst";
+import FedSentimentPanel from "./FedSentimentPanel";
+import PolicyOutcomePanel from "./PolicyOutcomePanel";
+import FraserHeatmap3D from "./FraserHeatmap3D";
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ResponsiveContainer, Tooltip, Legend,
@@ -616,6 +619,15 @@ export default function MacroPanel() {
           </div>
         </div>
       )}
+
+      {/* ── Fed Sentiment + Policy Outcomes (FRASER NLP) ─────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <FedSentimentPanel />
+        <PolicyOutcomePanel />
+      </div>
+
+      {/* ── 3D FRASER Surface — Fed tone × CPI × Unemployment ─────────── */}
+      <FraserHeatmap3D />
 
       {/* ── Row 1: Correlation heatmap + Network ─────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

@@ -21,6 +21,9 @@ class Settings:
     kalshi_api_password: str | None = os.getenv("KALSHI_API_PASSWORD") or None
     kalshi_private_key:  str | None = os.getenv("KALSHI_PRIVATE_KEY") or None
 
+    # ── FRASER / FRED API (St. Louis Fed) ────────────────────────────────────
+    fraser_api_key: str | None = os.getenv("FRASER_API_KEY") or None
+
     # ── Polymarket (disabled — geoblocked for US users) ───────────────────────
     api_key:        str | None = os.getenv("POLY_API_KEY") or None
     api_secret:     str | None = os.getenv("POLY_API_SECRET") or None

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routes import markets, backtest, strategies, signals, positions, feed, settings, watchlist, scanner, fred as fred_routes
 from backend.routes import auth as auth_routes, ops as ops_routes
+from backend.routes import fraser as fraser_routes
 from backend import cron_routes as cron
 from backend.services.stop_loss_executor import run_stop_loss_loop
 from backend.services.drawdown_monitor import drawdown_monitor
@@ -94,8 +95,9 @@ app.include_router(settings.router,   dependencies=_auth)
 app.include_router(watchlist.router,  dependencies=_auth)
 app.include_router(cron.router,        dependencies=_auth)
 app.include_router(scanner.router,     dependencies=_auth)
-app.include_router(fred_routes.router, dependencies=_auth)
-app.include_router(ops_routes.router,  dependencies=_auth)
+app.include_router(fred_routes.router,    dependencies=_auth)
+app.include_router(fraser_routes.router,  dependencies=_auth)
+app.include_router(ops_routes.router,     dependencies=_auth)
 
 if _has_admin:
     app.include_router(admin.router, dependencies=_auth)

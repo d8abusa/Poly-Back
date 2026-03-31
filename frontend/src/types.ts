@@ -252,6 +252,88 @@ export interface MarketWizardResult {
   error?:           string;
 }
 
+// ── FRASER / Fed NLP types ────────────────────────────────────────────────────
+
+export interface FraserAnalysis {
+  id:                    string;
+  document_type:         string;
+  doc_date:              string;
+  title:                 string;
+  word_count:            number;
+  tone_score:            number;       // -1 hawkish → +1 dovish
+  tone_label:            "hawkish" | "slightly_hawkish" | "neutral" | "slightly_dovish" | "dovish";
+  rate_direction:        "hike" | "hold" | "cut" | "unknown";
+  rate_signal_strength:  "strong" | "moderate" | "weak" | "none";
+  bs_direction:          "expand" | "hold" | "shrink" | "unknown";
+  guidance_strength:     "strong" | "moderate" | "weak" | "none";
+  inflation_concern:     number;
+  employment_concern:    number;
+  growth_concern:        number;
+  key_phrases:           string[];
+  policy_intent:         string;
+  target_metric:         string;
+  summary:               string;
+  analyzed_at:           string;
+}
+
+export interface PolicyDecision {
+  id:               string;
+  decision_date:    string;
+  decision_type:    string;
+  rate_change_bps:  number;
+  fed_funds_target: number | null;
+  stated_goal:      string;
+  target_metric:    string | null;
+  target_value:     number | null;
+  target_date:      string | null;
+  document_title:   string | null;
+  outcome_count:    number;
+  avg_score:        number | null;
+}
+
+export interface PolicyOutcome {
+  id:               string;
+  decision_id:      string;
+  measurement_date: string;
+  lag_months:       number;
+  fred_series:      string;
+  target_value:     number;
+  actual_value:     number;
+  deviation:        number;
+  score:            "hit" | "partial" | "miss";
+  score_numeric:    number;
+  decision_date:    string;
+  decision_type:    string;
+  rate_change_bps:  number;
+  stated_goal:      string;
+  target_metric:    string;
+  document_title:   string | null;
+}
+
+export interface FraserSentimentPoint {
+  date:             string;
+  tone_score:       number;
+  tone_label:       string;
+  rate_direction:   string;
+  inflation_concern:number;
+  employment_concern:number;
+  growth_concern:   number;
+  guidance_strength:string;
+  title:            string;
+}
+
+export interface FraserSurfacePoint {
+  date:           string;
+  tone_score:     number;
+  tone_label:     string;
+  rate_direction: string;
+  cpi:            number;
+  unrate:         number;
+  fed_rate:       number | null;
+  months_ago:     number;
+  title:          string;
+}
+
 export interface BatchWizardResult {
   total:           number;
   succeeded:       number;

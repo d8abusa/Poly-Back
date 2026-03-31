@@ -206,6 +206,71 @@ def init_db() -> None:
                 );
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fraser_documents (
+                    id            TEXT PRIMARY KEY,
+                    document_type TEXT NOT NULL,
+                    doc_date      DATE NOT NULL,
+                    title         TEXT NOT NULL,
+                    source_url    TEXT,
+                    text_content  TEXT,
+                    word_count    INTEGER DEFAULT 0,
+                    fetched_at    TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_fraser_docs_date ON fraser_documents (doc_date DESC);
+
+                CREATE TABLE IF NOT EXISTS fraser_analysis (
+                    id                    TEXT PRIMARY KEY,
+                    document_id           TEXT NOT NULL REFERENCES fraser_documents(id) ON DELETE CASCADE,
+                    tone_score            REAL NOT NULL,
+                    tone_label            TEXT NOT NULL,
+                    rate_direction        TEXT NOT NULL,
+                    rate_signal_strength  TEXT NOT NULL,
+                    bs_direction          TEXT NOT NULL,
+                    guidance_strength     TEXT NOT NULL,
+                    inflation_concern     REAL DEFAULT 0,
+                    employment_concern    REAL DEFAULT 0,
+                    growth_concern        REAL DEFAULT 0,
+                    key_phrases           TEXT,
+                    policy_intent         TEXT,
+                    target_metric         TEXT,
+                    summary               TEXT,
+                    model_used            TEXT NOT NULL,
+                    analyzed_at           TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_fraser_analysis_doc ON fraser_analysis (document_id);
+
+                CREATE TABLE IF NOT EXISTS policy_decisions (
+                    id                    TEXT PRIMARY KEY,
+                    decision_date         DATE NOT NULL,
+                    document_id           TEXT REFERENCES fraser_documents(id),
+                    decision_type         TEXT NOT NULL,
+                    rate_change_bps       INTEGER DEFAULT 0,
+                    fed_funds_target      REAL,
+                    stated_goal           TEXT,
+                    target_metric         TEXT,
+                    target_value          REAL,
+                    target_date           DATE,
+                    created_at            TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_policy_decisions_date ON policy_decisions (decision_date DESC);
+
+                CREATE TABLE IF NOT EXISTS policy_outcomes (
+                    id                TEXT PRIMARY KEY,
+                    decision_id       TEXT NOT NULL REFERENCES policy_decisions(id) ON DELETE CASCADE,
+                    measurement_date  DATE NOT NULL,
+                    lag_months        INTEGER NOT NULL,
+                    fred_series       TEXT NOT NULL,
+                    target_value      REAL NOT NULL,
+                    actual_value      REAL NOT NULL,
+                    deviation         REAL NOT NULL,
+                    score             TEXT NOT NULL,
+                    score_numeric     REAL NOT NULL,
+                    measured_at       TIMESTAMPTZ DEFAULT NOW()
+                );
+
+            """)
+
             # ── Migrations ────────────────────────────────────────────────────
             # Add asset_type to positions if not present (backfill from exchange)
             cur.execute("""
