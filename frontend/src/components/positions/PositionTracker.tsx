@@ -167,7 +167,12 @@ function ProbBar({ prob, entry, exit, color, assetType }: { prob: number; entry:
 }
 
 // ── Position Detail sidebar ────────────────────────────────────────────────────
-function PositionDetail({ pos, onClose }: { pos: LivePosition | null; onClose: (id: string) => void }) {
+function PositionDetail({ pos, onClose, onRefresh }: { pos: LivePosition | null; onClose: (id: string) => void; onRefresh: () => void }) {
+  const [editingSL,  setEditingSL]  = useState(false);
+  const [slDraft,    setSlDraft]    = useState("");
+  const [slSaving,   setSlSaving]   = useState(false);
+  const [slError,    setSlError]    = useState<string | null>(null);
+
   if (!pos) {
     return (
       <div style={{ padding: "40px 16px", textAlign: "center", color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace", fontSize: 11, lineHeight: 1.8 }}>
@@ -179,6 +184,7 @@ function PositionDetail({ pos, onClose }: { pos: LivePosition | null; onClose: (
   const pnl      = calcPnl(pos);
   const pct      = pnlPct(pos);
   const isPos    = pnl >= 0;
+  const isStock  = pos.asset_type === "stock" || pos.asset_type === "crypto";
   const rawProg  = pos.side === "YES"
     ? (pos.liveProb - pos.entry_price) / (pos.exit_target - pos.entry_price)
     : (pos.entry_price - pos.liveProb) / (pos.entry_price - pos.exit_target);
@@ -188,6 +194,80 @@ function PositionDetail({ pos, onClose }: { pos: LivePosition | null; onClose: (
     <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 3, padding: "8px 10px" }}>
       <div style={{ fontSize: 8, letterSpacing: "0.12em", color: "var(--muted)", textTransform: "uppercase", marginBottom: 4, fontFamily: "IBM Plex Mono, monospace" }}>{label}</div>
       <div style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 13, fontWeight: 500, color: cls ?? "var(--text)" }}>{value}</div>
+    </div>
+  );
+
+  const saveStopLoss = async () => {
+    const raw = slDraft.trim().replace("%", "").replace("$", "");
+    const num = parseFloat(raw);
+    if (isNaN(num) || num <= 0) { setSlError("Enter a valid value"); return; }
+    // Stocks: interpret as dollar price directly; prediction markets: interpret as % → divide by 100
+    const val = isStock ? num : num / 100;
+    setSlSaving(true); setSlError(null);
+    try {
+      const res = await apiFetch(`/api/positions/${pos.id}/stop-loss`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stop_loss: val }),
+      });
+      if (!res.ok) { setSlError("Save failed"); return; }
+      setEditingSL(false);
+      onRefresh();
+    } catch { setSlError("Save failed"); }
+    finally { setSlSaving(false); }
+  };
+
+  const stopLossCell = (
+    <div style={{ background: "var(--surface2)", border: `1px solid ${editingSL ? "rgba(239,68,68,0.5)" : "var(--border)"}`, borderRadius: 3, padding: "8px 10px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={{ fontSize: 8, letterSpacing: "0.12em", color: "var(--muted)", textTransform: "uppercase", fontFamily: "IBM Plex Mono, monospace" }}>Stop Loss</div>
+        {!editingSL && (
+          <button
+            onClick={() => { setSlDraft(pos.stop_loss ? (isStock ? pos.stop_loss.toFixed(2) : (pos.stop_loss * 100).toFixed(1)) : ""); setEditingSL(true); setSlError(null); }}
+            style={{ fontSize: 8, padding: "1px 5px", borderRadius: 2, border: "1px solid var(--border2)", background: "transparent", color: "var(--muted)", cursor: "pointer", fontFamily: "IBM Plex Mono, monospace" }}
+          >
+            {pos.stop_loss ? "edit" : "+ set"}
+          </button>
+        )}
+      </div>
+      {editingSL ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <input
+              autoFocus
+              type="number"
+              value={slDraft}
+              onChange={e => setSlDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") saveStopLoss(); if (e.key === "Escape") setEditingSL(false); }}
+              placeholder={isStock ? "e.g. 142.50" : "e.g. 35"}
+              style={{
+                flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 2,
+                color: "var(--text)", fontFamily: "IBM Plex Mono, monospace", fontSize: 11, padding: "3px 6px",
+              }}
+            />
+            <span style={{ fontSize: 9, color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace" }}>{isStock ? "$" : "%"}</span>
+          </div>
+          <div style={{ display: "flex", gap: 4 }}>
+            <button onClick={saveStopLoss} disabled={slSaving} style={{ flex: 1, padding: "3px 0", borderRadius: 2, border: "1px solid rgba(239,68,68,0.4)", background: "rgba(239,68,68,0.1)", color: "var(--no)", fontFamily: "IBM Plex Mono, monospace", fontSize: 9, cursor: "pointer" }}>
+              {slSaving ? "…" : "Save"}
+            </button>
+            <button onClick={() => { setEditingSL(false); setSlError(null); }} style={{ flex: 1, padding: "3px 0", borderRadius: 2, border: "1px solid var(--border2)", background: "transparent", color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace", fontSize: 9, cursor: "pointer" }}>
+              Cancel
+            </button>
+          </div>
+          {slError && <div style={{ fontSize: 8, color: "var(--no)", fontFamily: "IBM Plex Mono, monospace" }}>{slError}</div>}
+          {pos.stop_loss && (
+            <button onClick={async () => { setSlSaving(true); const r = await apiFetch(`/api/positions/${pos.id}/stop-loss`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stop_loss: null }) }); setSlSaving(false); if (r.ok) { setEditingSL(false); onRefresh(); } }}
+              style={{ padding: "3px 0", borderRadius: 2, border: "1px solid var(--border2)", background: "transparent", color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace", fontSize: 8, cursor: "pointer" }}>
+              Remove stop-loss
+            </button>
+          )}
+        </div>
+      ) : (
+        <div style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 13, fontWeight: 500, color: "var(--no)" }}>
+          {pos.stop_loss ? fmtProb(pos.stop_loss, pos.asset_type) : "—"}
+        </div>
+      )}
     </div>
   );
 
@@ -202,7 +282,7 @@ function PositionDetail({ pos, onClose }: { pos: LivePosition | null; onClose: (
         {item("Entry Prob",   fmtProb(pos.entry_price, pos.asset_type))}
         {item("Current Prob", fmtProb(pos.liveProb,    pos.asset_type),  isPos ? "var(--yes)" : "var(--no)")}
         {item("Exit Target",  fmtProb(pos.exit_target, pos.asset_type))}
-        {item("Stop Loss",    pos.stop_loss ? fmtProb(pos.stop_loss, pos.asset_type) : "—", "var(--no)")}
+        {stopLossCell}
         {item("Shares",       pos.shares.toFixed(0))}
         {item("Capital",      `$${pos.capital.toFixed(0)}`)}
       </div>
@@ -574,7 +654,7 @@ export default function PositionTracker() {
             <div style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 9, letterSpacing: "0.15em", color: "var(--muted)", textTransform: "uppercase", marginBottom: 12 }}>
               Position Detail
             </div>
-            <PositionDetail pos={selectedPos} onClose={id => setClosingId(id)} />
+            <PositionDetail pos={selectedPos} onClose={id => setClosingId(id)} onRefresh={loadPositions} />
           </div>
 
           {/* Risk Gauges */}
