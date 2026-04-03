@@ -124,6 +124,8 @@ export default function HistoryView() {
   }, [history, filterStrategy, filterReason, sortKey]);
 
   const totalPnl   = history.reduce((s, p) => s + p.realized_pnl, 0);
+  const totalCapital = history.reduce((s, p) => s + p.entry_prob * p.shares, 0);
+  const totalRetPct  = totalCapital > 0 ? (totalPnl / totalCapital) * 100 : 0;
   const wins       = history.filter(p => p.realized_pnl > 0);
   const losses     = history.filter(p => p.realized_pnl <= 0);
   const winRate    = history.length ? (wins.length / history.length * 100).toFixed(1) : "0";
@@ -133,13 +135,18 @@ export default function HistoryView() {
 
   // ── Cumulative PnL curve ──────────────────────────────────────────────────
 
-  const pnlCurve = useMemo(() => {
+  const { pnlCurve, cumPctById } = useMemo(() => {
     const sorted = [...history].sort((a,b) => new Date(a.closed_at).getTime() - new Date(b.closed_at).getTime());
+    const cap = sorted.reduce((s, p) => s + p.entry_prob * p.shares, 0);
     let cum = 0;
-    return sorted.map(p => {
+    const byId: Record<string, number> = {};
+    const curve = sorted.map(p => {
       cum += p.realized_pnl;
-      return { date: fmtDate(p.closed_at), cumPnl: parseFloat(cum.toFixed(2)), tradePnl: p.realized_pnl };
+      const pct = cap > 0 ? parseFloat(((cum / cap) * 100).toFixed(2)) : 0;
+      byId[p.id] = pct;
+      return { date: fmtDate(p.closed_at), cumPnl: parseFloat(cum.toFixed(2)), cumPct: pct, tradePnl: p.realized_pnl };
     });
+    return { pnlCurve: curve, cumPctById: byId };
   }, [history]);
 
   // ── Strategy breakdown ────────────────────────────────────────────────────
@@ -174,14 +181,15 @@ export default function HistoryView() {
     <div style={styles.root}>
 
       {/* ── Stats Bar ── */}
-      <div style={styles.statsBar}>
+      <div style={{ ...styles.statsBar, gridTemplateColumns: "repeat(7, 1fr)" }}>
         {[
-          { label: "Total Realized PnL", value: fmtPnl(totalPnl), cls: totalPnl >= 0 ? "pos" : "neg" },
-          { label: "Total Trades",        value: history.length,   cls: "neutral" },
-          { label: "Win Rate",            value: `${winRate}%`,    cls: "neutral" },
-          { label: "Avg Win",             value: fmtPnl(avgWin),   cls: "pos" },
-          { label: "Avg Loss",            value: fmtPnl(avgLoss),  cls: "neg" },
-          { label: "Profit Factor",       value: profitFactor,     cls: parseFloat(profitFactor as string) >= 1.5 ? "pos" : "neutral" },
+          { label: "Total Realized PnL", value: fmtPnl(totalPnl),                                                          cls: totalPnl >= 0 ? "pos" : "neg" },
+          { label: "Cumulative Return",  value: `${totalRetPct >= 0 ? "+" : ""}${totalRetPct.toFixed(2)}%`,                 cls: totalRetPct >= 0 ? "pos" : "neg" },
+          { label: "Total Trades",       value: history.length,                                                              cls: "neutral" },
+          { label: "Win Rate",           value: `${winRate}%`,                                                               cls: "neutral" },
+          { label: "Avg Win",            value: fmtPnl(avgWin),                                                              cls: "pos" },
+          { label: "Avg Loss",           value: fmtPnl(avgLoss),                                                             cls: "neg" },
+          { label: "Profit Factor",      value: profitFactor,     cls: parseFloat(profitFactor as string) >= 1.5 ? "pos" : "neutral" },
         ].map((s, i) => (
           <div key={i} style={styles.statCell}>
             <div style={styles.statLabel}>{s.label}</div>
@@ -305,7 +313,7 @@ export default function HistoryView() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Market", "Exchange", "Side", "Strategy", "Entry", "Exit", "Shares", "PnL", "Exit Reason", "Closed", ""].map(h => (
+                  {["Market", "Exchange", "Side", "Strategy", "Entry", "Exit", "Shares", "PnL", "Ret%", "Cum%", "Exit Reason", "Closed", ""].map(h => (
                     <th key={h} style={styles.th}>{h}</th>
                   ))}
                 </tr>
@@ -342,6 +350,12 @@ export default function HistoryView() {
                       <td style={{ ...styles.td, color: isPos ? "#22c55e" : "#ef4444" }}>{fmtPrice(pos.exit_prob, pos.asset_type)}</td>
                       <td style={styles.td}>{pos.shares}</td>
                       <td style={{ ...styles.td, color: isPos ? "#22c55e" : "#ef4444", fontWeight: 600 }}>{fmtPnl(pos.realized_pnl)}</td>
+                      <td style={{ ...styles.td, color: isPos ? "#22c55e" : "#ef4444" }}>
+                        {(() => { const cap = pos.entry_prob * pos.shares; return cap > 0 ? `${isPos ? "+" : ""}${((pos.realized_pnl / cap) * 100).toFixed(1)}%` : "—"; })()}
+                      </td>
+                      <td style={{ ...styles.td, color: (cumPctById[pos.id] ?? 0) >= 0 ? "#22c55e" : "#ef4444" }}>
+                        {cumPctById[pos.id] != null ? `${cumPctById[pos.id] >= 0 ? "+" : ""}${cumPctById[pos.id].toFixed(2)}%` : "—"}
+                      </td>
                       <td style={styles.td}>
                         <span style={{ ...styles.reasonBadge, color: reason.color, borderColor: reason.color + "44", background: reason.color + "15" }}>
                           {reason.label}

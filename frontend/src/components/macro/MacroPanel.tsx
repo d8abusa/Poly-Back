@@ -184,6 +184,7 @@ export default function MacroPanel() {
   const playRef                 = useRef<ReturnType<typeof setInterval> | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [error, setError]       = useState<string | null>(null);
+  const [showRadarInfo, setShowRadarInfo] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -316,7 +317,35 @@ export default function MacroPanel() {
       {radar.length > 0 && (() => {
         const hasHistory = radarHistory && radarHistory.frames.length > 1;
         const activeFrame = hasHistory ? radarHistory!.frames[frameIdx] : null;
-        const displayData = activeFrame ? activeFrame.spokes : radar;
+        // Carry forward the last known value for each spoke so no axis ever
+        // drops off the polygon during animation.  For each indicator, scan
+        // backwards through all frames up to and including the current one and
+        // use the most recent non-null current value.
+        const displayData = (() => {
+          const raw = activeFrame ? activeFrame.spokes : radar;
+          if (!activeFrame || !radarHistory) return raw.map(sp => ({ ...sp, stale: false }));
+          // Build last-known-value map by scanning frames 0..frameIdx
+          const lastKnown: Record<string, number> = {};
+          for (let fi = 0; fi <= frameIdx; fi++) {
+            for (const sp of radarHistory.frames[fi].spokes) {
+              if (sp.current != null) lastKnown[sp.indicator] = sp.current;
+            }
+          }
+          return raw.map(sp => ({
+            ...sp,
+            current: sp.current ?? lastKnown[sp.indicator] ?? 0,
+            stale: sp.current == null,   // true = carried forward, not a fresh reading
+          }));
+        })();
+
+        // Custom dot: filled circle for live data, hollow ring for carried-forward
+        const StrokeDot = (props: any) => {
+          const { cx, cy, payload } = props;
+          if (cx == null || cy == null) return null;
+          return payload?.stale
+            ? <circle cx={cx} cy={cy} r={4} fill="var(--surface2)" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="2 1" />
+            : <circle cx={cx} cy={cy} r={3} fill={accentColor} stroke="none" />;
+        };
         const isLive = !hasHistory || frameIdx === radarHistory!.frames.length - 1;
         const currentMonth = activeFrame?.month ?? null;
         const accentColor = isLive ? "#00d4a8" : "#f59e0b";
@@ -324,9 +353,25 @@ export default function MacroPanel() {
         return (
           <div style={{ background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "14px 16px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-              <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
-                Regime Fingerprint
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+                  Regime Fingerprint
+                </span>
+                <button
+                  onClick={() => setShowRadarInfo(v => !v)}
+                  title="What does this chart show?"
+                  style={{
+                    width: 16, height: 16, borderRadius: "50%", border: "1px solid",
+                    borderColor: showRadarInfo ? "#3b82f6" : "var(--border2)",
+                    background: showRadarInfo ? "rgba(59,130,246,0.15)" : "transparent",
+                    color: showRadarInfo ? "#3b82f6" : "var(--muted)",
+                    fontSize: 9, fontWeight: 700, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontFamily: "IBM Plex Mono, monospace", flexShrink: 0,
+                    transition: "all 0.12s",
+                  }}
+                >i</button>
+              </div>
               {currentMonth && (
                 <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "IBM Plex Mono, monospace", color: accentColor }}>
                   {currentMonth}
@@ -337,8 +382,41 @@ export default function MacroPanel() {
             <div style={{ fontSize: 8, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
               0 = benign · 100 = maximum stress
               {!hasHistory && " · dashed = recent avg"}
-              {hasHistory && " · scrub or play to trace policy impact over time"}
+              {hasHistory && " · ○ = prior value carried (no new data) · scrub or play to trace policy impact"}
             </div>
+
+            {/* ── Info panel ── */}
+            {showRadarInfo && (
+              <div style={{
+                marginBottom: 14, padding: "10px 12px",
+                background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.2)",
+                borderRadius: 6,
+              }}>
+                <div style={{ fontSize: 8, color: "#93c5fd", marginBottom: 8, fontFamily: "IBM Plex Mono, monospace", lineHeight: 1.6 }}>
+                  Each axis is a FRED macro indicator scored 0–100 where <strong>100 = maximum historical stress</strong>.
+                  The polygon shape is your macro regime fingerprint — a wider, fuller shape means more broad-based stress.
+                  Scrub the timeline to replay how the regime evolved month by month.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px" }}>
+                  {[
+                    { name: "Yield Spread",       detail: "10Y minus 2Y Treasury. Inverted curve (negative) = recession signal. High score = curve inverted." },
+                    { name: "10Y-3M Spread",       detail: "10Y minus 3-month Treasury. Stronger recession predictor than 10Y-2Y. High score = inverted." },
+                    { name: "Fed Rate",            detail: "Federal funds target rate. High score = tight monetary policy, borrowing expensive." },
+                    { name: "CPI YoY",             detail: "Consumer price inflation year-over-year. High score = elevated inflation, above 4–5% range." },
+                    { name: "Unemployment",        detail: "U-3 unemployment rate. High score = weak labor market, above 7–8%." },
+                    { name: "Dollar Index",        detail: "Trade-weighted USD. High score = strong dollar, which tightens global financial conditions." },
+                    { name: "VIX",                 detail: "CBOE equity volatility index (fear gauge). High score = market stress, above 30–35." },
+                    { name: "HY Spread",           detail: "High-yield bond spread over Treasuries. High score = credit stress, investors demanding large risk premium." },
+                    { name: "Policy Uncertainty",  detail: "Economic policy uncertainty index. High score = businesses and markets confused by unpredictable policy." },
+                  ].map(({ name, detail }) => (
+                    <div key={name} style={{ display: "flex", flexDirection: "column", gap: 1, marginBottom: 4 }}>
+                      <span style={{ fontSize: 8, fontWeight: 700, color: "var(--text)", fontFamily: "IBM Plex Mono, monospace" }}>{name}</span>
+                      <span style={{ fontSize: 7, color: "var(--muted)", lineHeight: 1.5 }}>{detail}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <ResponsiveContainer width="100%" height={280}>
               <RadarChart data={displayData} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
@@ -357,7 +435,7 @@ export default function MacroPanel() {
                   dataKey="current"
                   stroke={accentColor} fill={accentColor}
                   fillOpacity={0.25} strokeWidth={2}
-                  dot={{ r: 3, fill: accentColor, strokeWidth: 0 }}
+                  dot={<StrokeDot />}
                   isAnimationActive={true} animationDuration={300}
                 />
                 {!hasHistory && (

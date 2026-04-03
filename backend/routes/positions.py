@@ -88,6 +88,18 @@ async def close_position(
     position_id: str,
     close_reason: str = Query(default="manual"),
 ):
+    # Cancel any open Coinbase order before closing the position record
+    existing = pt.get_position(position_id)
+    if existing and existing.get("exchange") == "coinbase" and existing.get("coinbase_order_id"):
+        try:
+            from ..services.exchange_router import get_exchange_client
+            client = get_exchange_client("coinbase")
+            result = await client.cancel_order(existing["coinbase_order_id"])
+            log.info("Cancelled Coinbase order %s for position %s: %s",
+                     existing["coinbase_order_id"], position_id, result.get("status"))
+        except Exception as exc:
+            log.warning("Could not cancel Coinbase order for position %s: %s", position_id, exc)
+
     pos = pt.close_position(position_id, close_reason=close_reason)
     if pos is None:
         raise HTTPException(status_code=404, detail="Position not found")

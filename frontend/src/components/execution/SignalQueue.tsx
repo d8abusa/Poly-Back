@@ -3,6 +3,15 @@ import type { Signal, ExecutionMode } from "../../types";
 import ConfirmationCard from "./ConfirmationCard";
 import { apiFetch } from "../../lib/apiFetch";
 
+interface FraserModifier {
+  available: boolean;
+  multiplier: number;
+  tone_label: string;
+  rate_direction: string;
+  doc_date: string;
+  summary: string;
+}
+
 interface SignalQueueProps {
   executionMode: ExecutionMode;
 }
@@ -10,6 +19,14 @@ interface SignalQueueProps {
 export default function SignalQueue({ executionMode }: SignalQueueProps) {
   const [signals, setSignals]   = useState<Signal[]>([]);
   const [toast, setToast]       = useState<{ msg: string; ok: boolean } | null>(null);
+  const [fraser, setFraser]     = useState<FraserModifier | null>(null);
+
+  useEffect(() => {
+    apiFetch("/api/fraser/modifier")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.available) setFraser(d); })
+      .catch(() => {});
+  }, []);
 
   const showToast = (msg: string, ok = true) => {
     setToast({ msg, ok });
@@ -118,6 +135,25 @@ export default function SignalQueue({ executionMode }: SignalQueueProps) {
               padding: "2px 8px", fontSize: 9, fontWeight: 700,
             }}>
               {signals.length} pending
+            </span>
+          )}
+          {fraser && (
+            <span
+              title={fraser.summary}
+              style={{
+                background: fraser.multiplier > 1.0
+                  ? "rgba(34,197,94,0.1)"
+                  : fraser.multiplier < 1.0
+                    ? "rgba(239,68,68,0.1)"
+                    : "rgba(148,163,184,0.1)",
+                color: fraser.multiplier > 1.0 ? "#22c55e"
+                  : fraser.multiplier < 1.0 ? "#ef4444" : "var(--muted)",
+                border: `1px solid ${fraser.multiplier > 1.0 ? "rgba(34,197,94,0.25)" : fraser.multiplier < 1.0 ? "rgba(239,68,68,0.25)" : "rgba(148,163,184,0.2)"}`,
+                borderRadius: 10, padding: "2px 8px", fontSize: 9, fontWeight: 700,
+                cursor: "default", userSelect: "none",
+              }}
+            >
+              FRASER {fraser.multiplier > 1.0 ? "↑" : fraser.multiplier < 1.0 ? "↓" : "→"} {fraser.multiplier.toFixed(2)}×
             </span>
           )}
         </div>

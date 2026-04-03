@@ -96,9 +96,20 @@ async def _submit_to_clob(signal: SignalSchema) -> dict:
 
     # Coinbase / Robinhood / Yahoo — standard product_id / size interface
     client = get_exchange_client(exchange)
+
+    # Coinbase BUY accepts USD (quote_size), but SELL requires base crypto units.
+    # suggested_size is always in USD, so convert for the SELL side.
+    # Also apply a 0.5% haircut on SELL: Coinbase deducts ~0.5-0.6% fee at fill
+    # time, so actual holdings are slightly less than the pre-fee calculation.
+    usd_size = float(signal.suggested_size)
+    if signal.side.upper() == "SELL" and signal.entry_price:
+        order_size = (usd_size / float(signal.entry_price)) * 0.995
+    else:
+        order_size = usd_size
+
     return await client.place_order(
         product_id=signal.market_id,
         side=signal.side.upper(),
-        size=float(signal.suggested_size),
+        size=order_size,
         limit_price=signal.entry_price if signal.entry_price else None,
     )

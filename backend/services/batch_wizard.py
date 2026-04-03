@@ -33,10 +33,13 @@ _SENTINEL_SHARPE = -999.0
 def _split_history(history: list, validation_days: int) -> tuple[list, list]:
     """
     Split a price-history list into (train, validation) windows by calendar time.
+    Sorts ascending first so the split is correct regardless of source ordering
+    (Coinbase returns newest-first; Kalshi/Manifold return oldest-first).
     Returns (train_h, val_h). Either may be empty — callers must check length.
     """
     if not history:
         return [], []
+    history = sorted(history, key=lambda p: int(p["t"]))
     cutoff_ts = int(history[-1]["t"]) - validation_days * 86400
     train_h = [p for p in history if int(p["t"]) <= cutoff_ts]
     val_h   = [p for p in history if int(p["t"]) >  cutoff_ts]
@@ -46,7 +49,8 @@ def _split_history(history: list, validation_days: int) -> tuple[list, list]:
 def _span_days(history: list) -> int:
     if len(history) < 2:
         return 0
-    return max(0, (int(history[-1]["t"]) - int(history[0]["t"])) // 86400)
+    ts = [int(p["t"]) for p in history]
+    return max(0, (max(ts) - min(ts)) // 86400)
 
 
 def _eval_on_val(

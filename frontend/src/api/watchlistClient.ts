@@ -8,6 +8,7 @@ interface WatchlistItem {
   market_id: string;
   market_title: string;
   category: string;
+  exchange: string;
   added_at: string;
 }
 
@@ -43,6 +44,7 @@ export async function addWatchlistItem(params: {
   market_id: string;
   market_title: string;
   category?: string;
+  exchange?: string;
 }): Promise<WatchlistItem> {
   const response = await apiFetch('/api/watchlist', {
     method: 'POST',

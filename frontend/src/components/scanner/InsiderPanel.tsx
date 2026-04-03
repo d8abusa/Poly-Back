@@ -178,10 +178,21 @@ export default function InsiderPanel({ markets }: { markets: { condition_id: str
       {!results.length && !scanning && (
         <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 10, ...MONO,
           marginTop: 60, lineHeight: 1.8 }}>
-          Click Scan to analyse loaded markets for informed-flow signals.<br />
-          <span style={{ fontSize: 8, color: "var(--muted)" }}>
-            Signals: book imbalance (30%) · whale trades (25%) · price velocity (20%) · spread (15%) · thinness (10%)
-          </span>
+          {markets.length === 0 ? (
+            <>
+              <div style={{ fontSize: 12, marginBottom: 8, opacity: 0.4 }}>🔍</div>
+              No markets loaded.{" "}
+              <span style={{ color: "var(--accent)" }}>Search for markets on the Markets tab</span>
+              {" "}to populate the scan queue, then return here.
+            </>
+          ) : (
+            <>
+              Click Scan to analyse {markets.length} loaded market{markets.length !== 1 ? "s" : ""} for informed-flow signals.<br />
+              <span style={{ fontSize: 8, color: "var(--muted)" }}>
+                Signals: book imbalance (30%) · whale trades (25%) · price velocity (20%) · spread (15%) · thinness (10%)
+              </span>
+            </>
+          )}
         </div>
       )}
 

@@ -7,6 +7,7 @@ from ..services.live_scanner import get_scanner
 from ..services.insider_scanner import (
     scan_markets, set_scan_targets, get_last_results,
 )
+from ..services.kalshi_scanner import get_scanner_status as get_kalshi_status
 
 log    = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/scanner", tags=["scanner"])
@@ -98,3 +99,11 @@ async def get_insider_last():
         "scanned": len(results),
         "results": [r.as_dict() for r in results],
     }
+
+
+# ── Kalshi continuous scanner ─────────────────────────────────────────────────
+
+@router.get("/kalshi/status")
+async def kalshi_scanner_status():
+    """Return current state of the Kalshi background market scanner."""
+    return get_kalshi_status()

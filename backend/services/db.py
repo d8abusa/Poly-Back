@@ -175,6 +175,7 @@ def init_db() -> None:
                     market_id    TEXT UNIQUE NOT NULL,
                     market_title TEXT NOT NULL,
                     category     TEXT NOT NULL DEFAULT 'Other',
+                    exchange     TEXT NOT NULL DEFAULT 'polymarket',
                     added_at     TEXT NOT NULL
                 );
 
@@ -292,24 +293,24 @@ def init_db() -> None:
                     asset_type TEXT DEFAULT 'prediction_market';
             """)
 
+            # Add exchange to watchlist if not present (backfill to 'polymarket')
+            cur.execute("""
+                ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS
+                    exchange TEXT NOT NULL DEFAULT 'polymarket';
+            """)
+
 
 # ── Cursor helper (returns RealDict rows — no row_to_dict needed) ─────────────
 
 @contextmanager
 def get_cursor() -> Iterator[psycopg2.extras.RealDictCursor]:
-    """Context manager yielding a RealDictCursor. Auto-commits on exit."""
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = False
-    try:
+    """Context manager yielding a RealDictCursor backed by the connection pool."""
+    with get_conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        yield cur
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
+        try:
+            yield cur
+        finally:
+            cur.close()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

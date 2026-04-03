@@ -50,13 +50,14 @@ def _save_watchlist() -> None:
         for item in _watchlist:
             cur.execute("""
                 INSERT INTO watchlist
-                    (id, market_id, market_title, category, added_at)
+                    (id, market_id, market_title, category, exchange, added_at)
                 VALUES
-                    (%(id)s, %(market_id)s, %(market_title)s, %(category)s, %(added_at)s)
+                    (%(id)s, %(market_id)s, %(market_title)s, %(category)s, %(exchange)s, %(added_at)s)
                 ON CONFLICT (id) DO UPDATE SET
                     market_id=EXCLUDED.market_id,
                     market_title=EXCLUDED.market_title,
                     category=EXCLUDED.category,
+                    exchange=EXCLUDED.exchange,
                     added_at=EXCLUDED.added_at
             """, item.model_dump(mode="json", exclude_none=True))
 
@@ -65,9 +66,13 @@ def _save_alerts() -> None:
     """Persist current alerts to database."""
     with get_cursor() as cur:
         for alert in _alerts:
-            row = alert.model_dump(mode="json", exclude_none=True)
+            row = alert.model_dump(mode="json")
             # Serialize trigger sub-model to JSON text for TEXT column
             row["trigger"] = json.dumps(row["trigger"])
+            # Ensure nullable columns are present as None so psycopg2 sends NULL
+            row.setdefault("watchlist_item_id", None)
+            row.setdefault("triggered_at", None)
+            row.setdefault("dismissed_at", None)
             cur.execute("""
                 INSERT INTO alerts
                     (id, watchlist_item_id, market_id, market_title, trigger,
@@ -94,6 +99,7 @@ def add_to_watchlist(create: WatchlistCreate) -> WatchlistItem:
         market_id=create.market_id,
         market_title=create.market_title,
         category=create.category,
+        exchange=create.exchange,
     )
     _watchlist.append(item)
     _save_watchlist()
@@ -104,10 +110,18 @@ def remove_from_watchlist(item_id: str) -> bool:
     """Remove item from watchlist (and any associated alerts)."""
     _load_from_db()
 
-    to_remove = _watchlist.remove(next((item for item in _watchlist if item.id == item_id), None))
-    _save_watchlist()
+    item = next((i for i in _watchlist if i.id == item_id), None)
+    if item is None:
+        return False
 
-    # Remove associated alerts
+    # Remove from DB first — _save_watchlist() only upserts, it never deletes
+    with get_cursor() as cur:
+        cur.execute("DELETE FROM watchlist WHERE id = %s", (item_id,))
+
+    _watchlist.remove(item)
+
+    # Remove associated alerts from memory and DB (CASCADE handles DB side,
+    # but in-memory list needs manual cleanup)
     for alert in _alerts[:]:
         if alert.watchlist_item_id == item_id:
             _alerts.remove(alert)

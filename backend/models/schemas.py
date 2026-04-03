@@ -148,6 +148,28 @@ class BacktestRequest(BaseModel):
     date_from: Optional[str] = Field(None, description="Start date inclusive (YYYY-MM-DD)")
     date_to:   Optional[str] = Field(None, description="End date inclusive (YYYY-MM-DD)")
 
+    # Resolution Momentum — activates in the final hours before resolution
+    resolution_entry_threshold: float = Field(0.70, ge=0.01, le=0.99,
+                                description="Min probability to consider for resolution momentum entry")
+    dip_threshold: float = Field(0.05, ge=0.005, le=0.30,
+                                description="Min dip from recent peak to trigger resolution entry")
+    window_hours: int = Field(72, ge=1, le=240,
+                                description="Hours before resolution to activate resolution momentum")
+
+    # Probability Anchoring Reversion — fades drift away from round-number anchors
+    anchor_tolerance: float = Field(0.03, ge=0.005, le=0.15,
+                                description="Max distance from anchor point at open to activate")
+    min_drift: float = Field(0.04, ge=0.005, le=0.20,
+                                description="Minimum drift from anchor before entry")
+
+    # Liquidity Vacuum — fades fast price moves into thin order books
+    velocity_threshold: float = Field(0.03, ge=0.005, le=0.20,
+                                description="Minimum price velocity (move in last 5 ticks) to trigger fade")
+
+    # Regime Rotation — switches momentum/reversion based on FRED macro regime
+    regime_momentum_threshold: float = Field(0.02, ge=0.005, le=0.15,
+                                description="Minimum per-tick momentum to enter in expansion regime")
+
     # FRED macro context — injected server-side, not sent from the frontend.
     # Strategies read these to modulate thresholds and sizing.
     fred_p_true:        Optional[float] = Field(None, ge=0.05, le=0.95,

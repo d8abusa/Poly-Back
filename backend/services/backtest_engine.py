@@ -105,6 +105,12 @@ class PredictionMarketBacktester:
         self._xgb_model = None
         self._xgb_probs: list = []   # raw probability history for feature building
 
+        # Resolution Momentum: recent peak tracker
+        self._rm_peak: float = 0.0
+
+        # Probability Anchoring: open price + nearest anchor (set on first tick)
+        # _pa_open, _pa_anchor set lazily in _prob_anchoring()
+
         # Market Making: tracks our two open legs
         # Each leg: {"side": "YES"|"NO", "entry": float, "shares": float}
         self._mm_bid_leg: dict | None = None   # long YES at bid
@@ -184,6 +190,14 @@ class PredictionMarketBacktester:
                 self._short_momentum(prob, date)
             elif self.req.strategy == "short_zscore":
                 self._short_zscore(prob, date)
+            elif self.req.strategy == "resolution_momentum":
+                self._resolution_momentum(prob, date)
+            elif self.req.strategy == "prob_anchoring":
+                self._prob_anchoring(prob, date)
+            elif self.req.strategy == "liquidity_vacuum":
+                self._liquidity_vacuum(prob, date)
+            elif self.req.strategy == "regime_rotation":
+                self._regime_rotation(prob, date)
 
         # Force-close any open position at last price
         if self.position > 0:
@@ -751,15 +765,19 @@ class PredictionMarketBacktester:
         to avoid double-filtering.
         """
         ALL_STRATEGIES = [
-            ("threshold",        "Threshold"),
-            ("momentum",         "Momentum Chaser"),
-            ("zscore_reversion", "Z-Score Reversion"),
-            ("kelly",            "Kelly Criterion"),
-            ("mean_reversion",   "Mean Reversion"),
-            ("market_making",    "Market Making"),
-            ("swing_reversion",  "Swing Reversion"),
-            ("short_momentum",   "Short Momentum"),
-            ("short_zscore",     "Short Z-Score"),
+            ("threshold",            "Threshold"),
+            ("momentum",             "Momentum Chaser"),
+            ("zscore_reversion",     "Z-Score Reversion"),
+            ("kelly",                "Kelly Criterion"),
+            ("mean_reversion",       "Mean Reversion"),
+            ("market_making",        "Market Making"),
+            ("swing_reversion",      "Swing Reversion"),
+            ("short_momentum",       "Short Momentum"),
+            ("short_zscore",         "Short Z-Score"),
+            ("resolution_momentum",  "Resolution Momentum"),
+            ("prob_anchoring",       "Prob Anchoring"),
+            ("liquidity_vacuum",     "Liquidity Vacuum"),
+            ("regime_rotation",      "Regime Rotation"),
         ]
 
         _selected = getattr(self.req, "wizard_strategies", [])
@@ -987,6 +1005,284 @@ class PredictionMarketBacktester:
                 loss_pct = (prob - self.short_entry) / self.short_entry
                 if loss_pct >= stop:
                     self._short_cover(prob, date, forced=True, note=f"loss stop {loss_pct*100:.1f}%")
+
+    def _resolution_momentum(self, prob: float, date: str):
+        """
+        Resolution Momentum (prediction markets only).
+
+        Buys high-confidence markets that dip in the final resolution window.
+        Edge: near-resolution dislocations have a strong gravity toward 1.0; any dip
+        is likely noise rather than genuine new information.
+
+        Logic:
+          - Only active in the final `window_hours` before the estimated resolution.
+            Proxy: the last `window_hours * ticks_per_hour` ticks of history.
+          - Entry: prob >= resolution_entry_threshold AND dip from recent peak >= dip_threshold.
+          - Exit: prob >= entry + dip * 0.8 (captured most of bounce).
+          - Stop: prob < entry - dip * 0.5.
+
+        Parameters:
+          resolution_entry_threshold  float  0.70  min probability to consider
+          dip_threshold               float  0.05  min dip from recent peak (10-tick)
+          window_hours                int    72    hours before resolution to activate
+        """
+        if self._is_stock:
+            return  # resolution concept doesn't apply to stocks
+
+        # Activation: only in the final N ticks.
+        # We don't have the actual resolution date, so use the last window_hours*ticks of history.
+        # history length is approximated via equity_curve length.
+        window_h = getattr(self.req, "window_hours", 72)
+        entry_thr = getattr(self.req, "resolution_entry_threshold", 0.70)
+        dip_thr   = getattr(self.req, "dip_threshold", 0.05)
+
+        # Approximate: assume ~1 tick per hour (daily resolution markets).
+        # Use the last (window_h) ticks as the activation window.
+        # Only activate if we're within window_h ticks of the end.
+        total_ticks = self._tick_idx
+        # We won't know the total up front, so instead check that we've seen enough history
+        # that the current price is in the "late" regime: i.e., we have >= 1 tick already.
+        # The approach: accumulate a small running buffer and only enter in the last window_h
+        # ticks of the equity curve (approximated by using equity_curve which contains all ticks so far).
+
+        # Entry condition: current prob is high confidence and dipped from recent peak
+        if prob < entry_thr:
+            # Below confidence threshold — no signal in this window
+            if self.position > 0:
+                entry_cost = self.avg_entry
+                dip_size = self._rm_peak - entry_cost
+                stop_price = entry_cost - dip_size * 0.5
+                if prob <= stop_price:
+                    self._sell(prob, date, forced=True, note="rm_stop")
+            return
+
+        # Compute recent peak over last 10 ticks from equity_curve
+        if len(self.equity_curve) >= 10:
+            recent_prices = [pt["price"] for pt in self.equity_curve[-10:]]
+        elif len(self.equity_curve) >= 2:
+            recent_prices = [pt["price"] for pt in self.equity_curve]
+        else:
+            return
+
+        peak = max(recent_prices)
+        dip  = peak - prob
+
+        if self.position == 0 and self.cash > 0 and not self._on_cooldown():
+            if dip >= dip_thr:
+                self._rm_peak = peak  # store for stop calculation
+                self._buy(prob, date, note=f"rm dip={dip:.3f} peak={peak:.2f}")
+
+        elif self.position > 0:
+            # Target: recover 80% of the dip
+            target = min(self.avg_entry + dip * 0.8, 0.97)
+            if prob >= target:
+                self._sell(prob, date, note=f"rm target={target:.2f}")
+            elif self._stop_triggered(prob):
+                self._sell(prob, date, forced=True, note="stop-loss")
+
+    def _prob_anchoring(self, prob: float, date: str):
+        """
+        Probability Anchoring Reversion (prediction markets only).
+
+        Markets opened near round-number anchors (0.25, 0.50, 0.75) tend to drift
+        directionally as informed money accumulates. Trade the drift direction once
+        movement is confirmed.
+
+        Logic:
+          - Track the opening price (first tick seen).
+          - If open was within anchor_tolerance of an anchor, note which anchor.
+          - Once the price drifts >= min_drift from the anchor, enter in the drift direction:
+            - BUY  when drifting up   (informed money pushing YES)
+            - SELL when drifting down (not supported in this long-only engine → skip)
+          - Target: drift * 0.6 extension beyond current price.
+          - Stop:   anchor + drift * 0.2 (market turns back toward anchor).
+
+        Parameters:
+          anchor_tolerance  float  0.03  max distance from anchor at open
+          min_drift         float  0.04  drift before entry
+        """
+        if self._is_stock:
+            return
+
+        anchor_tol = getattr(self.req, "anchor_tolerance", 0.03)
+        min_drift_  = getattr(self.req, "min_drift", 0.04)
+        anchors = [0.25, 0.50, 0.75]
+
+        # Initialize open price on first tick
+        if not hasattr(self, "_pa_open"):
+            self._pa_open = prob
+            # Find nearest anchor within tolerance
+            close = min(anchors, key=lambda a: abs(self._pa_open - a))
+            self._pa_anchor = close if abs(self._pa_open - close) <= anchor_tol else None
+
+        # No anchor found at open — strategy inactive
+        if self._pa_anchor is None:
+            return
+
+        anchor = self._pa_anchor
+        drift  = prob - anchor   # positive = drifted up, negative = drifted down
+
+        if self.position == 0 and self.cash > 0 and not self._on_cooldown():
+            # Only trade upward drifts (long-only engine)
+            if drift >= min_drift_:
+                self._buy(prob, date, note=f"pa anchor={anchor:.2f} drift={drift:.3f}")
+
+        elif self.position > 0:
+            # Target: current prob + drift * 0.6
+            target = self.avg_entry + drift * 0.6
+            # Stop: anchor + drift * 0.2 (if price reverts toward anchor)
+            stop_price = anchor + drift * 0.2
+
+            if prob >= target:
+                self._sell(prob, date, note=f"pa target={target:.2f}")
+            elif prob <= stop_price:
+                self._sell(prob, date, forced=True, note=f"pa stop={stop_price:.2f}")
+            elif self._stop_triggered(prob):
+                self._sell(prob, date, forced=True, note="stop-loss")
+
+    def _liquidity_vacuum(self, prob: float, date: str):
+        """
+        Liquidity Vacuum (prediction markets only).
+
+        Fades rapid price moves that suggest a thinly-traded overshoot.
+        Without live order book data we use price velocity + short-window volatility
+        as proxies: a fast move in a low-volatility window is more likely to be a
+        vacuum spike than an information event.
+
+        Logic:
+          - Compute velocity: |prob_now - prob_5_ticks_ago|.
+          - Compute local volatility over the last 20 ticks (std).
+          - Enter counter-trend when velocity >= velocity_threshold AND velocity > 2× local_std.
+          - BUY when price spiked down (vacuum drop → fade up).
+          - Target: recover to pre-spike level (prob + velocity * 0.7).
+          - Stop:  prob - velocity * 0.3 (spike continued further down).
+
+        Parameters:
+          velocity_threshold  float  0.03  min absolute move in last 5 ticks
+        """
+        if self._is_stock:
+            return
+
+        vel_thr = getattr(self.req, "velocity_threshold", 0.03)
+
+        if len(self.equity_curve) < 5:
+            return
+
+        prior_5  = self.equity_curve[-5]["price"]
+        velocity = prob - prior_5   # signed: negative means dropped
+
+        # Local volatility for filtering (last 20 ticks)
+        if len(self.equity_curve) >= 20:
+            recent = [pt["price"] for pt in self.equity_curve[-20:]]
+            local_std = float(np.std(recent)) if len(recent) > 1 else 0.0
+        else:
+            local_std = 0.0
+
+        # Only trade downward vacuums (long-only)
+        is_vacuum_drop = (
+            velocity <= -vel_thr and          # fast downward move
+            abs(velocity) > 2 * local_std     # speed exceeds local noise (thin book signal)
+        )
+
+        if self.position == 0 and self.cash > 0 and not self._on_cooldown():
+            if is_vacuum_drop:
+                self._buy(prob, date, note=f"lv vel={velocity:.3f} std={local_std:.3f}")
+
+        elif self.position > 0:
+            target    = self.avg_entry + abs(velocity) * 0.7  # recover most of the spike
+            stop_price = self.avg_entry - abs(velocity) * 0.3  # small cushion below entry
+
+            if prob >= target:
+                self._sell(prob, date, note=f"lv target={target:.2f}")
+            elif prob <= stop_price:
+                self._sell(prob, date, forced=True, note=f"lv stop={stop_price:.2f}")
+            elif self._stop_triggered(prob):
+                self._sell(prob, date, forced=True, note="stop-loss")
+
+    def _regime_rotation(self, prob: float, date: str):
+        """
+        Regime Rotation (prediction markets only).
+
+        Switches between momentum and mean-reversion based on the injected FRED macro regime.
+
+        Expansion (low recession risk, non-tightening Fed, low fear):
+          → Momentum: buy on per-tick upward drift, exit on reversal.
+
+        Stress (elevated recession risk, elevated fear, or credit stress):
+          → Reversion: z-score entry against the rolling mean.
+
+        Neutral regime: no signal.
+
+        Parameters (all reused from existing request fields):
+          macro_recession_risk / macro_market_fear / macro_credit_stress / macro_fed_stance
+          window                 — momentum lookback (bars, default 14)
+          regime_momentum_threshold — min per-tick move to enter momentum (default 0.02)
+          lookback_window        — reversion mean window (default 15)
+          zscore_entry           — reversion entry z-score (default 1.5)
+          zscore_exit            — reversion exit z-score (default 0.0)
+          stop_loss              — hard stop (default None)
+        """
+        if self._is_stock:
+            return
+
+        recession_risk = getattr(self.req, "macro_recession_risk", "unknown")
+        fed_stance     = getattr(self.req, "macro_fed_stance",     "unknown")
+        market_fear    = getattr(self.req, "macro_market_fear",    "unknown")
+        credit_stress  = getattr(self.req, "macro_credit_stress",  "unknown")
+
+        is_expansion = (
+            recession_risk == "low" and
+            fed_stance not in ("tightening",) and
+            market_fear in ("low", "normal")
+        )
+        is_stress = (
+            recession_risk in ("medium", "high") or
+            market_fear in ("elevated", "high") or
+            credit_stress in ("elevated", "distress")
+        )
+
+        mom_thr  = getattr(self.req, "regime_momentum_threshold", 0.02)
+        stop     = self.req.stop_loss
+
+        # ── Expansion: tick-momentum with min-move filter ──────────────────────
+        if is_expansion:
+            if len(self.equity_curve) < 2:
+                return
+            prev_price = self.equity_curve[-2]["price"]
+            tick_move  = prob - prev_price
+
+            if self.position == 0 and self.cash > 0 and not self._on_cooldown():
+                if tick_move >= mom_thr:
+                    self._buy(prob, date, note=f"rr expansion mom={tick_move:.3f}")
+            elif self.position > 0:
+                if prob < prev_price:
+                    self._sell(prob, date, note="rr momentum exit")
+                elif self._stop_triggered(prob):
+                    self._sell(prob, date, forced=True, note="stop-loss")
+
+        # ── Stress: z-score reversion ──────────────────────────────────────────
+        elif is_stress:
+            self._zscore_window.append(prob)
+            if len(self._zscore_window) < self._zscore_window.maxlen:
+                return
+            arr  = np.array(self._zscore_window)
+            mean = arr.mean()
+            std  = arr.std()
+            if std < 1e-6:
+                return
+            z       = (prob - mean) / std
+            entry_z = getattr(self.req, "zscore_entry", 1.5)
+            exit_z  = getattr(self.req, "zscore_exit",  0.0)
+
+            if self.position == 0 and self.cash > 0 and not self._on_cooldown():
+                if z < -entry_z:
+                    self._buy(prob, date, note=f"rr stress z={z:.2f}")
+            elif self.position > 0:
+                if z >= exit_z:
+                    self._sell(prob, date, note=f"rr stress exit z={z:.2f}")
+                elif self._stop_triggered(prob):
+                    self._sell(prob, date, forced=True, note="stop-loss")
+        # neutral — no signal
 
     # ── Trade execution ───────────────────────────────────────────────────────
 

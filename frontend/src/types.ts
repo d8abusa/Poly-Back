@@ -49,6 +49,8 @@ export interface Position {
   entry_date:    string;
   closed_at:     string | null;
   realized_pnl:  number | null;
+  asset_type:    "crypto" | "stock" | "prediction_market";
+  exchange:      string;
 }
 
 export interface PositionSummary {
@@ -132,6 +134,17 @@ export interface StrategyParams {
   wizard_strategies: string[];
   // Universal
   slippage_bps: number;
+  // Resolution Momentum
+  resolution_entry_threshold: number;
+  dip_threshold:              number;
+  window_hours:               number;
+  // Probability Anchoring
+  anchor_tolerance: number;
+  min_drift:        number;
+  // Liquidity Vacuum
+  velocity_threshold: number;
+  // Regime Rotation
+  regime_momentum_threshold: number;
 }
 
 export interface TradeEntry {

@@ -98,10 +98,33 @@ def is_halted() -> bool:
     return _halted
 
 
+def check_new_order(size_usd: float) -> tuple[bool, str]:
+    """
+    Gate check before placing any AUTO order.
+    Returns (allowed: bool, reason: str).
+    """
+    if _halted:
+        return False, f"System halted: {_halt_reason}"
+
+    max_position = float(_RISK_CONFIG.get("max_position_usd", os.getenv("MAX_POSITION_USD", "500.0")))
+    if size_usd > max_position:
+        return False, f"Order size ${size_usd:.0f} exceeds per-position limit ${max_position:.0f}"
+
+    # Refuse new orders if drawdown is already at the threshold
+    current_value = _SESSION_CAPITAL + _session_pnl
+    drawdown = (_peak_value - current_value) / _peak_value if _peak_value > 0 else 0.0
+    if drawdown >= _MAX_SESSION_DRAWDOWN:
+        return False, f"Session drawdown {drawdown*100:.1f}% at limit — halting new orders"
+
+    return True, "ok"
+
+
 def record_realized_pnl(pnl: float) -> None:
-    global _session_pnl, _halted, _halt_reason
+    global _session_pnl, _halted, _halt_reason, _peak_value
     _session_pnl += pnl
     current_value = _SESSION_CAPITAL + _session_pnl
+    if current_value > _peak_value:
+        _peak_value = current_value   # advance high-water mark
     drawdown = (_peak_value - current_value) / _peak_value if _peak_value > 0 else 0.0
     if drawdown >= _MAX_SESSION_DRAWDOWN and not _halted:
         _halted = True
@@ -158,11 +181,20 @@ async def flatten_all_and_halt(reason: str = "manual_kill_switch") -> dict:
             log.error("flatten_all: failed to close %s: %s", pos["id"][:8], exc)
             failed.append(pos["id"])
 
+    if failed:
+        log.critical(
+            "KILL SWITCH: %d position(s) FAILED to close — MANUAL INTERVENTION REQUIRED: %s",
+            len(failed), failed,
+        )
+    else:
+        log.warning("KILL SWITCH: all %d position(s) closed successfully", len(closed))
+
     return {
         "halted":   True,
         "reason":   reason,
         "closed":   closed,
         "failed":   failed,
+        "manual_intervention_required": len(failed) > 0,
     }
 
 

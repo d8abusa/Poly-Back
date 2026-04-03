@@ -23,6 +23,7 @@ import OpsPanel from "../components/ops/OpsPanel";
 import InsiderPanel from "../components/scanner/InsiderPanel";
 import OptimizerPanel from "../components/optimizer/OptimizerPanel";
 import BatchWizardPanel from "../components/optimizer/BatchWizardPanel";
+import FeedManager from "../components/feeds/FeedManager";
 import { apiFetch, clearToken } from "../lib/apiFetch";
 
 // ── BacktestConsole — owns ALL shared state ────────────────────────────────────
@@ -401,12 +402,12 @@ export default function BacktestConsole() {
               </span>
             )}
             {/* View nav */}
-            {(["backtest", "optimizer", "bwizard", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist", "macro", "insider", "ops"] as const).map(v => {
+            {(["backtest", "optimizer", "bwizard", "signals", "positions", "history", "strategies", "feed", "runs", "watchlist", "macro", "insider", "inst-feeds", "ops"] as const).map(v => {
               const labels: Record<string, string> = {
                 backtest: "Backtest", optimizer: "Optimizer", bwizard: "Batch Wizard",
                 signals: "Signals", positions: "Positions",
                 history: "Trade History", strategies: "Strategies", feed: "Feed", runs: "Runs", watchlist: "Watchlist",
-                macro: "Macro", insider: "Insider", ops: "Ops",
+                macro: "Macro", insider: "Insider", "inst-feeds": "Inst. Feeds", ops: "Ops",
               };
               const active = view === v;
               return (
@@ -580,6 +581,10 @@ export default function BacktestConsole() {
         ) : view === "macro" ? (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
             <MacroPanel />
+          </div>
+        ) : view === "inst-feeds" ? (
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>
+            <FeedManager />
           </div>
         ) : view === "insider" ? (
           <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 }}>

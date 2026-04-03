@@ -4,9 +4,12 @@ Position store — backed by PostgreSQL with an in-memory cache.
 Same public API as before; state now survives backend restarts.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 from ..models.schemas import SignalSchema
 from .db import get_cursor, row_to_dict, asset_type_from_exchange, record_trade_equity
@@ -37,30 +40,38 @@ def _ensure_loaded() -> None:
 
 # ── Mutations ─────────────────────────────────────────────────────────────────
 
-def open_position(signal: SignalSchema, category: str = "Other", exchange: str = "coinbase") -> dict:
+def open_position(
+    signal: SignalSchema,
+    category: str = "Other",
+    exchange: str = "coinbase",
+    coinbase_order_id: Optional[str] = None,
+    order_type: str = "market",
+) -> dict:
     _ensure_loaded()
     pos = {
-        "id":           str(uuid.uuid4()),
-        "signal_id":    signal.id,
-        "market_id":    signal.market_id,
-        "market_title": getattr(signal, "market_title", None) or signal.market_id[:40],
-        "category":     category,
-        "strategy":     signal.strategy,
-        "side":         "YES" if signal.side == "BUY" else "NO",
-        "entry_price":  signal.entry_price,
-        "current_prob": signal.entry_price,
-        "exit_target":  signal.target_price,
-        "stop_loss":    signal.stop_loss,
-        "shares":       signal.suggested_shares,
-        "capital":      float(signal.suggested_size),
-        "status":       "open",
-        "entry_date":   signal.created_at or datetime.now(timezone.utc).isoformat(),
-        "closed_at":    None,
-        "exit_prob":    None,
-        "close_reason": None,
-        "realized_pnl": None,
-        "exchange":     exchange,
-        "asset_type":   asset_type_from_exchange(exchange),
+        "id":                 str(uuid.uuid4()),
+        "signal_id":          signal.id,
+        "market_id":          signal.market_id,
+        "market_title":       getattr(signal, "market_title", None) or signal.market_id[:40],
+        "category":           category,
+        "strategy":           signal.strategy,
+        "side":               "YES" if signal.side == "BUY" else "NO",
+        "entry_price":        signal.entry_price,
+        "current_prob":       signal.entry_price,
+        "exit_target":        signal.target_price,
+        "stop_loss":          signal.stop_loss,
+        "shares":             signal.suggested_shares,
+        "capital":            float(signal.suggested_size),
+        "status":             "open",
+        "entry_date":         signal.created_at or datetime.now(timezone.utc).isoformat(),
+        "closed_at":          None,
+        "exit_prob":          None,
+        "close_reason":       None,
+        "realized_pnl":       None,
+        "exchange":           exchange,
+        "asset_type":         asset_type_from_exchange(exchange),
+        "coinbase_order_id":  coinbase_order_id,
+        "order_type":         order_type,
     }
     with get_cursor() as cur:
         cur.execute("""
@@ -68,13 +79,13 @@ def open_position(signal: SignalSchema, category: str = "Other", exchange: str =
                 (id, signal_id, market_id, market_title, category, strategy, side,
                  entry_price, current_prob, exit_target, stop_loss, shares, capital,
                  status, entry_date, closed_at, exit_prob, close_reason, realized_pnl,
-                 exchange, asset_type)
+                 exchange, asset_type, coinbase_order_id, order_type)
             VALUES
                 (%(id)s, %(signal_id)s, %(market_id)s, %(market_title)s, %(category)s,
                  %(strategy)s, %(side)s, %(entry_price)s, %(current_prob)s, %(exit_target)s,
                  %(stop_loss)s, %(shares)s, %(capital)s, %(status)s, %(entry_date)s,
                  %(closed_at)s, %(exit_prob)s, %(close_reason)s, %(realized_pnl)s,
-                 %(exchange)s, %(asset_type)s)
+                 %(exchange)s, %(asset_type)s, %(coinbase_order_id)s, %(order_type)s)
         """, pos)
     _open[pos["id"]] = pos
     return pos
@@ -83,6 +94,38 @@ def open_position(signal: SignalSchema, category: str = "Other", exchange: str =
 def get_open() -> list[dict]:
     _ensure_loaded()
     return list(_open.values())
+
+
+def get_position(position_id: str) -> Optional[dict]:
+    _ensure_loaded()
+    return _open.get(position_id)
+
+
+def get_open_limit_positions() -> list[dict]:
+    """Return open Coinbase limit positions that have a known order ID — for the order monitor."""
+    _ensure_loaded()
+    return [
+        p for p in _open.values()
+        if p.get("exchange") == "coinbase"
+        and p.get("order_type") == "limit"
+        and p.get("coinbase_order_id")
+    ]
+
+
+def update_fill_price(position_id: str, fill_price: float) -> Optional[dict]:
+    """Update entry_price and current_prob after actual fill confirmation from Coinbase."""
+    pos = _open.get(position_id)
+    if pos is None:
+        return None
+    pos["entry_price"]  = fill_price
+    pos["current_prob"] = fill_price
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE positions SET entry_price=%s, current_prob=%s WHERE id=%s",
+            (fill_price, fill_price, position_id),
+        )
+    log.info("Fill confirmed for position %s at %.6f", position_id[:8], fill_price)
+    return pos
 
 
 def get_closed() -> list[dict]:
@@ -96,7 +139,10 @@ def update_prob(position_id: str, prob: float) -> Optional[dict]:
     if pos is not None:
         # Crypto positions use real dollar prices (> 1.0); only clamp for prediction markets
         if pos.get("asset_type") == "crypto":
-            pos["current_prob"] = max(0.0, prob)
+            if prob <= 0 or prob > 1_000_000:
+                log.warning("update_prob: ignoring implausible crypto price %.4f for %s", prob, position_id[:8])
+                return pos
+            pos["current_prob"] = prob
         else:
             pos["current_prob"] = max(0.01, min(0.99, prob))
         with get_cursor() as cur:

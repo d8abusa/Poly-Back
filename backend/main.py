@@ -7,12 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.routes import markets, backtest, strategies, signals, positions, feed, settings, watchlist, scanner, fred as fred_routes
 from backend.routes import auth as auth_routes, ops as ops_routes
 from backend.routes import fraser as fraser_routes
+from backend.routes import webull as webull_routes
+from backend.routes import institutional_feeds as inst_feeds_routes
 from backend import cron_routes as cron
 from backend.services.stop_loss_executor import run_stop_loss_loop
 from backend.services.drawdown_monitor import drawdown_monitor
 from backend.services.alert_monitor import run_alert_monitor
 from backend.services.fred_scheduler import run_fred_scheduler, _trigger_once as fred_trigger_once
 from backend.services.insider_scanner import run_insider_scanner, scan_markets, get_last_results
+from backend.services.kalshi_scanner import run_kalshi_scanner
+from backend.services.coinbase_order_monitor import run_order_monitor
+from backend.services.feed_scheduler import run_feed_scheduler as run_inst_feed_scheduler
 from backend.services.job_registry import registry
 from backend.services.db import close_pool
 from backend.routes.ops import register_trigger
@@ -44,13 +49,19 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_alert_monitor()),
         asyncio.create_task(run_fred_scheduler()),
         asyncio.create_task(run_insider_scanner()),
+        asyncio.create_task(run_kalshi_scanner()),
+        asyncio.create_task(run_order_monitor()),
+        asyncio.create_task(run_inst_feed_scheduler()),
     ]
     # Attach tasks to registry so catalog can report live health
-    registry.attach_task("drawdown_monitor",   tasks[0])
-    registry.attach_task("stop_loss_executor", tasks[1])
-    registry.attach_task("alert_monitor",      tasks[2])
-    registry.attach_task("fred_auto_refresh",  tasks[3])
-    registry.attach_task("insider_scanner",    tasks[4])
+    registry.attach_task("drawdown_monitor",       tasks[0])
+    registry.attach_task("stop_loss_executor",     tasks[1])
+    registry.attach_task("alert_monitor",          tasks[2])
+    registry.attach_task("fred_auto_refresh",      tasks[3])
+    registry.attach_task("insider_scanner",        tasks[4])
+    registry.attach_task("kalshi_scanner",         tasks[5])
+    registry.attach_task("coinbase_order_monitor", tasks[6])
+    registry.attach_task("inst_feed_scheduler",    tasks[7])
     yield
     for t in tasks:
         t.cancel()
@@ -97,7 +108,9 @@ app.include_router(cron.router,        dependencies=_auth)
 app.include_router(scanner.router,     dependencies=_auth)
 app.include_router(fred_routes.router,    dependencies=_auth)
 app.include_router(fraser_routes.router,  dependencies=_auth)
-app.include_router(ops_routes.router,     dependencies=_auth)
+app.include_router(webull_routes.router,  dependencies=_auth)
+app.include_router(ops_routes.router,          dependencies=_auth)
+app.include_router(inst_feeds_routes.router,   dependencies=_auth)
 
 if _has_admin:
     app.include_router(admin.router, dependencies=_auth)

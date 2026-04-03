@@ -428,6 +428,171 @@ ALL_STRATEGIES = [
         "synthetic_curve": _curve(60, trend=0.001, noise=0.025),
     },
     {
+        "id":         "resolution_momentum",
+        "name":       "Resolution Momentum",
+        "tagline":    "Buy high-confidence markets that dip near resolution",
+        "category":   "Event-Driven",
+        "risk":       "Medium",
+        "complexity": "Intermediate",
+        "color":      "#f43f5e",
+        "status":     "live",
+        "params": [
+            {"name": "resolution_entry_threshold", "label": "Min Confidence",  "default": 0.70, "min": 0.50, "max": 0.95, "step": 0.01,  "desc": "Minimum probability to consider for entry"},
+            {"name": "dip_threshold",              "label": "Min Dip",         "default": 0.05, "min": 0.01, "max": 0.20, "step": 0.005, "desc": "Minimum drop from recent peak to trigger entry"},
+            {"name": "window_hours",               "label": "Window (hours)",  "default": 72,   "min": 1,    "max": 240,  "step": 1,     "desc": "Approximate hours before resolution the strategy activates"},
+        ],
+        "formula": "prob ≥ T_conf ∧ (peak₁₀ - prob) ≥ T_dip → BUY;  target = entry + dip × 0.8",
+        "description": (
+            "Exploits the mean-reverting gravity of high-confidence prediction markets "
+            "in the final hours before resolution. When a market is trading at ≥70¢ "
+            "and dips ≥5¢ from its recent peak, the dislocation is almost always noise — "
+            "market-makers briefly stepping back, not new information.\n\n"
+            "Enters on the dip and targets recovering 80% of the peak-to-current-price gap. "
+            "Stop is set at entry minus 50% of the dip."
+        ),
+        "logic": {
+            "entry": "prob ≥ resolution_entry_threshold AND (peak_10_ticks - prob) ≥ dip_threshold",
+            "exit":  "prob ≥ entry + dip × 0.8 OR prob ≤ entry - dip × 0.5",
+            "size":  "full capital",
+        },
+        "edge": (
+            "Near-resolution prediction markets have strong convergence pressure. "
+            "Any dip below recent probability level is disproportionately likely to mean-revert "
+            "compared to an equivalent dip in a fresh market, because the resolution event "
+            "is imminent and new information is rare at this stage."
+        ),
+        "risks": [
+            "Genuine late-breaking information can cause a high-confidence market to collapse",
+            "Resolution window is approximated — may not exactly match the last 72h",
+            "Works poorly on markets with uncertain/extended resolution timelines",
+        ],
+        "performance": {"win_rate": 0, "avg_return": 0, "sharpe": 0, "max_dd": 0, "trades": 0},
+        "synthetic_curve": _curve(19, trend=0.006, noise=0.022),
+    },
+    {
+        "id":         "prob_anchoring",
+        "name":       "Prob Anchoring",
+        "tagline":    "Trade drift away from round-number anchors",
+        "category":   "Behavioral Finance",
+        "risk":       "Medium",
+        "complexity": "Moderate",
+        "color":      "#22d3ee",
+        "status":     "live",
+        "params": [
+            {"name": "anchor_tolerance", "label": "Anchor Tolerance", "default": 0.03, "min": 0.005, "max": 0.10, "step": 0.005, "desc": "Max distance from 25/50/75 anchor at open"},
+            {"name": "min_drift",        "label": "Min Drift",        "default": 0.04, "min": 0.01,  "max": 0.15, "step": 0.005, "desc": "Min drift from anchor before entry"},
+        ],
+        "formula": "open ≈ anchor ± T_tol;  |prob - anchor| ≥ T_drift → trade drift direction",
+        "description": (
+            "Markets frequently open near psychological anchor points (25¢, 50¢, 75¢) where "
+            "uninformed traders cluster. Once informed money accumulates and pushes the price "
+            "away from the anchor by a meaningful amount, the drift tends to persist.\n\n"
+            "Enters in the direction of the drift once it crosses min_drift from the anchor, "
+            "targeting an extension of 60% of the current drift distance. "
+            "Exits if price reverts back toward the anchor."
+        ),
+        "logic": {
+            "entry": "market_open ≈ 25/50/75 AND |prob - anchor| ≥ min_drift AND drift_up",
+            "exit":  "prob ≥ entry + drift × 0.6 OR prob ≤ anchor + drift × 0.2",
+            "size":  "full capital",
+        },
+        "edge": (
+            "Behavioral anchoring is well-documented in financial markets. "
+            "Round-number clustering creates predictable initial price levels. "
+            "Drift confirmation filters out random noise while entering ahead of the "
+            "continuation move from informed order flow."
+        ),
+        "risks": [
+            "Anchoring effect weaker in very active, liquid markets with sophisticated participants",
+            "Drift can stop or reverse without fully extending — entry may be too late",
+            "Requires accurate open-price detection — first tick must be near anchor",
+        ],
+        "performance": {"win_rate": 0, "avg_return": 0, "sharpe": 0, "max_dd": 0, "trades": 0},
+        "synthetic_curve": _curve(44, trend=0.004, noise=0.030),
+    },
+    {
+        "id":         "liquidity_vacuum",
+        "name":       "Liquidity Vacuum",
+        "tagline":    "Fade overshoots into thin order books",
+        "category":   "Market Microstructure",
+        "risk":       "Medium-High",
+        "complexity": "Advanced",
+        "color":      "#a855f7",
+        "status":     "live",
+        "params": [
+            {"name": "velocity_threshold", "label": "Velocity",  "default": 0.03, "min": 0.01, "max": 0.15, "step": 0.005, "desc": "Min absolute price drop in last 5 ticks to trigger fade"},
+        ],
+        "formula": "Δp₅ ≤ −T_vel ∧ |Δp₅| > 2σ₂₀ → BUY;  target = entry + |Δp| × 0.7",
+        "description": (
+            "Detects rapid price moves (velocity) that exceed recent volatility norms — a "
+            "signal that the move happened into a thin order book rather than on genuine "
+            "information flow. Fades the drop by buying the overshoot.\n\n"
+            "Uses the 20-tick rolling standard deviation as a proxy for normal market "
+            "noise: if the 5-tick move is more than 2× the rolling std, it's likely a "
+            "vacuum spike, not an information event."
+        ),
+        "logic": {
+            "entry": "velocity ≤ −threshold AND abs(velocity) > 2 × local_std",
+            "exit":  "prob ≥ entry + velocity × 0.7 OR prob ≤ entry − velocity × 0.3",
+            "size":  "full capital",
+        },
+        "edge": (
+            "Thin prediction market order books frequently produce sharp intraday moves when "
+            "a large sell order briefly overwhelms the bid side. These overshoots revert quickly "
+            "once the normal bid-ask equilibrium is restored — often within a few ticks."
+        ),
+        "risks": [
+            "Genuine information events look exactly like vacuums — can't always distinguish",
+            "Without live order book data, detection is approximate (volatility proxy)",
+            "Near resolution, all large moves are genuine — strategy degrades in final hours",
+        ],
+        "performance": {"win_rate": 0, "avg_return": 0, "sharpe": 0, "max_dd": 0, "trades": 0},
+        "synthetic_curve": _curve(71, trend=0.003, noise=0.028),
+    },
+    {
+        "id":         "regime_rotation",
+        "name":       "Regime Rotation",
+        "tagline":    "Momentum in expansion, reversion in stress",
+        "category":   "Macro-Adaptive",
+        "risk":       "Medium",
+        "complexity": "Advanced",
+        "color":      "#4ade80",
+        "status":     "live",
+        "params": [
+            {"name": "regime_momentum_threshold", "label": "Mom Threshold",  "default": 0.02, "min": 0.005, "max": 0.10, "step": 0.005, "desc": "Min per-tick move to enter in expansion regime"},
+            {"name": "zscore_entry",              "label": "Reversion Z",    "default": 1.5,  "min": 0.5,   "max": 4.0,  "step": 0.1,   "desc": "Z-score entry threshold in stress regime"},
+            {"name": "lookback_window",           "label": "Rev Window",     "default": 15,   "min": 5,     "max": 60,   "step": 1,     "desc": "Rolling window for reversion mean in stress regime"},
+        ],
+        "formula": "expansion → momentum(thresh);  stress → zscore_reversion(entry_z);  neutral → no signal",
+        "description": (
+            "Selects between momentum and mean-reversion dynamically based on the live FRED "
+            "macro regime injected from your macro context module.\n\n"
+            "Expansion (low recession risk, non-tightening Fed, calm markets): momentum. "
+            "Price drift is more likely to continue when macro tail-winds are present.\n\n"
+            "Stress (elevated recession risk, fear, or credit stress): mean-reversion. "
+            "Extremes snap back more reliably in uncertain environments.\n\n"
+            "Neutral or unknown regime: no signal — sits in cash."
+        ),
+        "logic": {
+            "entry": "regime = expansion → tick_move ≥ threshold;  regime = stress → z < −entry_z",
+            "exit":  "expansion → tick reversal;  stress → z ≥ exit_z;  always → stop_loss",
+            "size":  "full capital",
+        },
+        "edge": (
+            "No single strategy dominates across all macro regimes. "
+            "Regime Rotation eliminates the need to manually switch strategies as the "
+            "macro environment changes — the engine selects the appropriate logic automatically "
+            "based on the same FRED data already powering your macro dashboard."
+        ),
+        "risks": [
+            "Regime classification has latency — FRED data has 1–4 week publication lag",
+            "Unknown regime produces no signal — capital sits idle",
+            "Misclassified regime runs the wrong strategy for an extended period",
+        ],
+        "performance": {"win_rate": 0, "avg_return": 0, "sharpe": 0, "max_dd": 0, "trades": 0},
+        "synthetic_curve": _curve(85, trend=0.004, noise=0.032),
+    },
+    {
         "id":         "wizard",
         "name":       "Wizard",
         "tagline":    "Run all strategies — let the best one win",

@@ -18,7 +18,7 @@ interface StrategyControlsProps {
 }
 
 // Strategies the backtest engine actually executes
-const LIVE_STRATEGIES = new Set(["threshold", "momentum", "zscore_reversion", "kelly", "market_making", "xgboost", "short_momentum", "short_zscore", "wizard"]);
+const LIVE_STRATEGIES = new Set(["threshold", "momentum", "zscore_reversion", "kelly", "market_making", "xgboost", "short_momentum", "short_zscore", "wizard", "resolution_momentum", "prob_anchoring", "liquidity_vacuum", "regime_rotation"]);
 
 interface StrategyFull extends StrategyMeta {
   tagline?: string;

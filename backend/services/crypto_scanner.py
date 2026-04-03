@@ -196,8 +196,11 @@ async def _scan_asset(product_id: str) -> Optional[dict]:
             execution_mode  = ExecutionMode.confirm,
         )
 
-        sq.add_signal(sig)
-        _pending_for.add(product_id)
+        queued = sq.add_signal(sig)
+        if queued is None:
+            log.error("crypto_scanner: add_signal returned None for %s — signal lost", product_id)
+        else:
+            _pending_for.add(product_id)
         alerts.send_alert_dict({
             "type":       "crypto_signal",
             "product_id": product_id,

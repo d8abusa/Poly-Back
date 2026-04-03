@@ -11,6 +11,7 @@ interface WatchlistItem {
   market_id: string;
   market_title: string;
   category: string;
+  exchange: string;
   added_at: string;
 }
 
@@ -48,7 +49,7 @@ export default function Watchlist() {
   // Market search inside the add dialog
   const [searchExchange, setSearchExchange] = useState<"kalshi"|"coinbase"|"yahoo"|"polymarket">("kalshi");
   const [searchQuery, setSearchQuery]       = useState("");
-  const [searchResults, setSearchResults]   = useState<{id:string;condition_id:string|null;title:string;category:string}[]>([]);
+  const [searchResults, setSearchResults]   = useState<{id:string;condition_id:string|null;title:string;category:string;exchange?:string}[]>([]);
   const [searchLoading, setSearchLoading]   = useState(false);
   const [showDropdown, setShowDropdown]     = useState(false);
   const searchTimer                         = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,10 +106,11 @@ export default function Watchlist() {
     setSearchQuery(""); setSearchResults([]); setShowDropdown(false);
   }
 
-  function selectSearchResult(m: {id:string;condition_id:string|null;title:string;category:string}) {
+  function selectSearchResult(m: {id:string;condition_id:string|null;title:string;category:string;exchange?:string}) {
     setNewId(m.condition_id ?? m.id);
     setNewTitle(m.title);
     setNewCat(m.category || "Other");
+    if (m.exchange) setSearchExchange(m.exchange as typeof searchExchange);
     setSearchQuery(m.title);
     setShowDropdown(false);
   }
@@ -116,7 +118,7 @@ export default function Watchlist() {
   async function handleAdd() {
     if (!newId.trim() || !newTitle.trim()) return;
     try {
-      await addWatchlistItem({ market_id: newId.trim(), market_title: newTitle.trim(), category: newCat });
+      await addWatchlistItem({ market_id: newId.trim(), market_title: newTitle.trim(), category: newCat, exchange: searchExchange });
       resetAddDialog();
       showToast("Added to watchlist");
       load();

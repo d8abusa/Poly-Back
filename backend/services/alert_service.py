@@ -16,6 +16,7 @@ from ..models.schemas import SignalSchema
 log = logging.getLogger(__name__)
 
 _alerts: list[dict] = []
+_MAX_ALERTS = 500   # cap in-memory history; oldest trimmed when exceeded
 
 
 def send_alert(signal: SignalSchema, error: Optional[str] = None) -> dict:
@@ -34,6 +35,8 @@ def send_alert(signal: SignalSchema, error: Optional[str] = None) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _alerts.append(alert)
+    if len(_alerts) > _MAX_ALERTS:
+        del _alerts[: len(_alerts) - _MAX_ALERTS]
 
     # Fire-and-forget Telegram notification
     try:
@@ -56,6 +59,8 @@ def send_alert_dict(data: dict) -> dict:
         **data,
     }
     _alerts.append(alert)
+    if len(_alerts) > _MAX_ALERTS:
+        del _alerts[: len(_alerts) - _MAX_ALERTS]
     return alert
 
 

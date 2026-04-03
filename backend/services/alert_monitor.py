@@ -27,39 +27,42 @@ async def check_watchlist_alerts() -> None:
     try:
         from ..services.exchange_router import get_exchange_client
 
-        client = get_exchange_client("polymarket")
-        if not client:
-            log.warning("Alert monitor: No exchange client available")
-            return
-
-        # Poll all watched markets for price updates
-        # In production, we would:
-        # 1. Fetch watchlist
-        # 2. For each market, get current price from feed
-        # 3. Check_triggers(current_price, market_id)
         watchlist = get_watchlist()
 
         for item in watchlist:
             try:
-                # Fetch current price from exchange
+                exchange = getattr(item, "exchange", None) or "polymarket"
+                client = get_exchange_client(exchange)
+                if not client:
+                    log.debug("Alert monitor: no client for exchange %s", exchange)
+                    continue
+
                 snapshot = await client.get_market_snapshot(item.market_id, token_id=None)
-                if snapshot and "last_price" in snapshot:
-                    price = float(snapshot["last_price"])
-                    triggered = check_triggers(item.market_id, price)
+                raw_price = snapshot.get("last_price") if snapshot else None
+                if raw_price is None:
+                    continue
 
-                    if triggered:
-                        for alert in triggered:
-                            log.info(
-                                "Alert triggered: %s %s @ %.4f (trigger: %s %.4f)",
-                                alert.market_id, alert.trigger.price_type,
-                                price, alert.trigger.direction,
-                                alert.trigger.threshold
-                            )
+                price = float(raw_price)
+                triggered = check_triggers(item.market_id, price)
+
+                if triggered:
+                    for alert in triggered:
+                        log.info(
+                            "Alert triggered: %s %s @ %.4f (trigger: %s %.4f)",
+                            alert.market_id, alert.trigger.price_type,
+                            price, alert.trigger.direction,
+                            alert.trigger.threshold
+                        )
             except Exception as exc:
-                log.warning("Failed to check alerts for market %s: %s", item.market_id, exc)
+                # Downgrade 404s to debug — stale/expired markets are expected
+                msg = str(exc)
+                if "404" in msg or "Not Found" in msg:
+                    log.debug("Alert monitor: market not found (expired?) %s — remove from watchlist", item.market_id)
+                else:
+                    log.warning("Failed to check alerts for market %s: %s", item.market_id, exc)
 
-    except Exception as exc:
-        log.error("Alert monitor check failed: %s", exc)
+    except Exception:
+        log.exception("Alert monitor check failed")
 
 
 async def run_alert_monitor() -> None:
@@ -78,6 +81,6 @@ async def run_alert_monitor() -> None:
             except asyncio.CancelledError:
                 log.info("Alert monitor shutting down")
                 raise
-            except Exception as exc:
-                log.error("Alert monitor error: %s", exc)
+            except Exception:
+                log.exception("Alert monitor error")
         await asyncio.sleep(10)

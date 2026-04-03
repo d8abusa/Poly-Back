@@ -89,10 +89,61 @@ async def _check_positions() -> None:
         close_side = "SELL" if side == "YES" else "BUY"
         order_ok   = False
         try:
-            result   = await client.place_order(
+            raw_shares  = float(pos.get("shares", 1))
+            exchange_id = pos.get("exchange", "coinbase")
+
+            # For Coinbase SELL, clamp sell size to the actual available balance.
+            # If tracker shares is NULL/missing it defaults to 1.0 which would
+            # attempt to sell a full unit — far more than the actual holding.
+            # Use min(tracker_shares, actual_balance) to be safe, which handles
+            # both the dust-from-fees case and the default-1.0 fallback case.
+            sell_size = raw_shares
+            if close_side == "SELL" and exchange_id == "coinbase":
+                base_currency = market_id.split("-")[0]   # "ETH" from "ETH-USD"
+                actual = await client.get_account_balance(base_currency)
+                if actual is not None and actual > 0:
+                    sell_size = min(raw_shares, actual)
+                    log.info(
+                        "stop-loss: CB balance=%.8f tracker=%.8f using=%.8f %s",
+                        actual, raw_shares, sell_size, base_currency,
+                    )
+                else:
+                    # Balance query failed — estimate from position capital/entry_price
+                    # rather than raw_shares which may be a bad default (1.0).
+                    capital      = pos.get("capital") or pos.get("suggested_size")
+                    entry_price  = pos.get("entry_price")
+                    if capital and entry_price:
+                        sell_size = round(float(capital) / float(entry_price) * 0.99, 8)
+                        log.warning(
+                            "stop-loss: CB balance unavailable for %s — "
+                            "estimating from capital=%.2f/entry=%.4f → %.8f",
+                            base_currency, float(capital), float(entry_price), sell_size,
+                        )
+                    else:
+                        log.warning(
+                            "stop-loss: CB balance unavailable for %s, no capital/entry fallback, "
+                            "using tracker shares %.8f",
+                            base_currency, raw_shares,
+                        )
+
+            if sell_size <= 0:
+                log.error(
+                    "stop-loss: computed sell_size=%.8f for pos=%s — skipping order, manual close required",
+                    sell_size, pos_id[:8],
+                )
+                alerts.send_alert_dict({
+                    "type":        "stop_loss_bad_size",
+                    "position_id": pos_id,
+                    "market_id":   market_id,
+                    "sell_size":   sell_size,
+                    "note":        "sell_size <= 0 — could not compute valid order size. Manual close required.",
+                })
+                continue
+
+            result = await client.place_order(
                 product_id=market_id,
                 side=close_side,
-                size=float(pos.get("shares", 1)),
+                size=sell_size,
             )
             order_ok = result.get("status") == "submitted"
         except Exception as exc:

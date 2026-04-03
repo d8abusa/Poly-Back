@@ -126,15 +126,42 @@ const PARAMS_STOCK: Record<string, ParamDef[]> = {
   ],
 };
 
+// ── New strategies (prediction market only) ────────────────────────────────
+(PARAMS as Record<string, ParamDef[] | null>)["resolution_momentum"] = [
+  { key: "resolution_entry_threshold", label: "Min Conf",   min: 0.50, max: 0.95, step: 0.01,  fmt: v => `${(v*100).toFixed(0)}¢` },
+  { key: "dip_threshold",              label: "Min Dip",    min: 0.01, max: 0.20, step: 0.005, fmt: v => `${(v*100).toFixed(0)}¢` },
+  { key: "window_hours",               label: "Window",     min: 1,    max: 240,  step: 1,     fmt: v => `${v}h` },
+  { key: "stop_loss",                  label: "Stop Loss",  min: 0.05, max: 0.45, step: 0.01,  fmt: v => `${(v*100).toFixed(0)}¢`, nullable: true },
+];
+(PARAMS as Record<string, ParamDef[] | null>)["prob_anchoring"] = [
+  { key: "anchor_tolerance", label: "Anchor Tol", min: 0.005, max: 0.10, step: 0.005, fmt: v => `±${(v*100).toFixed(1)}¢` },
+  { key: "min_drift",        label: "Min Drift",  min: 0.01,  max: 0.15, step: 0.005, fmt: v => `${(v*100).toFixed(1)}¢` },
+  { key: "stop_loss",        label: "Stop Loss",  min: 0.05,  max: 0.45, step: 0.01,  fmt: v => `${(v*100).toFixed(0)}¢`, nullable: true },
+];
+(PARAMS as Record<string, ParamDef[] | null>)["liquidity_vacuum"] = [
+  { key: "velocity_threshold", label: "Velocity",  min: 0.01, max: 0.15, step: 0.005, fmt: v => `${(v*100).toFixed(1)}¢/5t` },
+  { key: "stop_loss",          label: "Stop Loss", min: 0.05, max: 0.45, step: 0.01,  fmt: v => `${(v*100).toFixed(0)}¢`, nullable: true },
+];
+(PARAMS as Record<string, ParamDef[] | null>)["regime_rotation"] = [
+  { key: "regime_momentum_threshold", label: "Mom Thr",    min: 0.005, max: 0.10, step: 0.005, fmt: v => `${(v*100).toFixed(1)}¢` },
+  { key: "zscore_entry",              label: "Rev Z",      min: 0.5,   max: 4.0,  step: 0.1,   fmt: v => `${v.toFixed(1)}σ` },
+  { key: "lookback_window",           label: "Rev Window", min: 5,     max: 60,   step: 1,     fmt: v => `${v} ticks` },
+  { key: "stop_loss",                 label: "Stop Loss",  min: 0.05,  max: 0.45, step: 0.01,  fmt: v => `${(v*100).toFixed(0)}¢`, nullable: true },
+];
+
 // Wizard strategy lists (for the picker UI)
 const WIZARD_LONG_STRATS = [
-  { id: "threshold",       label: "Threshold" },
-  { id: "momentum",        label: "Momentum" },
-  { id: "zscore_reversion",label: "Z-Score" },
-  { id: "kelly",           label: "Kelly" },
-  { id: "mean_reversion",  label: "Mean Rev" },
-  { id: "market_making",   label: "Mkt Making" },
-  { id: "swing_reversion", label: "Swing Rev" },
+  { id: "threshold",            label: "Threshold" },
+  { id: "momentum",             label: "Momentum" },
+  { id: "zscore_reversion",     label: "Z-Score" },
+  { id: "kelly",                label: "Kelly" },
+  { id: "mean_reversion",       label: "Mean Rev" },
+  { id: "market_making",        label: "Mkt Making" },
+  { id: "swing_reversion",      label: "Swing Rev" },
+  { id: "resolution_momentum",  label: "Resolution" },
+  { id: "prob_anchoring",       label: "Anchoring" },
+  { id: "liquidity_vacuum",     label: "Liq Vacuum" },
+  { id: "regime_rotation",      label: "Regime Rot" },
 ];
 const WIZARD_SHORT_STRATS = [
   { id: "short_momentum", label: "Short Mom" },
@@ -171,6 +198,17 @@ export const DEFAULT_PARAMS: StrategyParams = {
   slippage_bps:        5.0,
   wizard_windows:      1,
   wizard_strategies:   [],
+  // Resolution Momentum
+  resolution_entry_threshold: 0.70,
+  dip_threshold:              0.05,
+  window_hours:               72,
+  // Probability Anchoring
+  anchor_tolerance: 0.03,
+  min_drift:        0.04,
+  // Liquidity Vacuum
+  velocity_threshold: 0.03,
+  // Regime Rotation
+  regime_momentum_threshold: 0.02,
 };
 
 export default function ParamSliders({ strategy, params, onChange, exchange }: ParamSlidersProps) {

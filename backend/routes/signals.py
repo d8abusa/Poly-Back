@@ -11,6 +11,7 @@ from ..services import position_tracker as pt
 from ..services.exchange_router import get_exchange_client
 from ..services.crypto_scanner import _pending_for as _crypto_pending
 from ..services import telegram_service
+from ..services.fraser_modifier import apply_fraser_modifier
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/signals", tags=["signals"])
@@ -103,8 +104,8 @@ async def stage_from_backtest(req: StageFromBacktestRequest):
     # Override with the live market price so the signal has valid dollar values.
     if _is_coinbase_signal(req.market_id):
         client = get_exchange_client("coinbase")
-        live_price = await client.get_last_price(req.market_id)
-        if live_price is None or live_price < 1.0:
+        live_price = await client.get_last_price(_order_product_id(req.market_id))
+        if live_price is None or live_price <= 0.0:
             raise HTTPException(
                 status_code=502,
                 detail=f"Could not fetch live price for {req.market_id} — cannot stage crypto signal",
@@ -118,12 +119,19 @@ async def stage_from_backtest(req: StageFromBacktestRequest):
     edge    = (target - entry) / entry
     conf    = _derive_confidence(req.win_rate, req.sharpe_ratio)
 
+    # Apply FRASER macro modifier (prediction markets only; no-op for crypto/stocks)
+    adj_size, adj_conf, fraser_ctx = apply_fraser_modifier(
+        float(req.capital), conf, req.exchange
+    )
+
     reasoning = (
         f"Staged from {req.strategy} backtest on {req.market_title}. "
         f"Return {req.total_return:+.1f}% · Sharpe {req.sharpe_ratio:.2f} · "
         f"Win rate {req.win_rate*100:.0f}% over {req.total_trades} trades. "
         f"Capital ${req.capital:,.0f} → {shares:.6f} units @ ${entry:,.2f}."
     )
+    if fraser_ctx is not None:
+        reasoning += f" [{fraser_ctx.summary}]"
 
     sig = SignalSchema(
         market_id       = req.market_id,
@@ -132,12 +140,12 @@ async def stage_from_backtest(req: StageFromBacktestRequest):
         entry_price     = round(entry, 4),
         target_price    = target,
         stop_loss       = req.stop_loss,
-        suggested_size  = int(req.capital),
-        suggested_shares= round(shares, 6),
+        suggested_size  = int(adj_size),
+        suggested_shares= round(adj_size / entry, 6),
         expected_edge   = round(edge, 4),
         maker_edge      = 0.0,
         delta_taker     = 0.0,
-        confidence      = conf,
+        confidence      = adj_conf,
         reasoning       = reasoning,
         execution_mode  = req.execution_mode,
         exchange        = req.exchange,
@@ -244,7 +252,13 @@ async def approve_signal(
         _crypto_pending.discard(sig.market_id)
 
         # Record as a position in tracker (adapts to crypto scale)
-        pos = pt.open_position(sig, exchange="coinbase")
+        _order_type = "limit" if sig.execution_mode.value == "confirm" else "market"
+        pos = pt.open_position(
+            sig,
+            exchange="coinbase",
+            coinbase_order_id=order.get("order_id"),
+            order_type=_order_type,
+        )
         log.info(
             "Coinbase order placed: %s (signal: %s) %s %.8f @ %.4f  order_id=%s  pos=%s",
             product_id, sig.market_id, sig.side, shares, sig.entry_price,

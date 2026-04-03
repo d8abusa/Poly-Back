@@ -82,6 +82,41 @@ class CoinbaseClient(BaseExchangeClient):
             timeout=30.0,
             headers={"User-Agent": "PolyBack/1.0", "Accept": "application/json"},
         )
+        self._precision_cache: dict[str, tuple[int, int]] = {}
+
+    @staticmethod
+    def _increment_decimals(increment: str) -> int:
+        """'0.00001' → 5, '1' → 0, '0.01' → 2."""
+        if not increment or increment == "1":
+            return 0
+        if "." in increment:
+            return len(increment.rstrip("0").split(".")[1])
+        return 0
+
+    @staticmethod
+    def _fmt(value: float, decimals: int) -> str:
+        """Format a float to exactly `decimals` decimal places (no trailing dot for 0)."""
+        if decimals == 0:
+            return str(int(round(value, 0)))
+        return f"{value:.{decimals}f}"
+
+    async def _get_precision(self, product_id: str) -> tuple[int, int]:
+        """Return (base_decimals, price_decimals) for a product, cached per session."""
+        if product_id in self._precision_cache:
+            return self._precision_cache[product_id]
+        path = f"/products/{product_id}"
+        try:
+            resp = await self._client.get(
+                f"{COINBASE_BASE}{path}", headers=self._auth_headers("GET", path)
+            )
+            data = resp.json()
+            base_dec  = self._increment_decimals(data.get("base_increment",  "0.00000001"))
+            quote_dec = self._increment_decimals(data.get("quote_increment", "0.01"))
+        except Exception as exc:
+            log.warning("Could not fetch precision for %s: %s — using defaults", product_id, exc)
+            base_dec, quote_dec = 8, 2
+        self._precision_cache[product_id] = (base_dec, quote_dec)
+        return base_dec, quote_dec
 
     def _auth_headers(self, method: str, path: str) -> dict:
         token = _build_jwt(method, path)
@@ -174,7 +209,8 @@ class CoinbaseClient(BaseExchangeClient):
             resp = await self._client.get(f"{COINBASE_BASE}{path}", headers=headers, params=params)
             resp.raise_for_status()
             candles = resp.json().get("candles", [])
-            return [{"t": int(c["start"]), "p": round(float(c["close"]), 8)} for c in candles if c.get("close")]
+            pts = [{"t": int(c["start"]), "p": round(float(c["close"]), 8)} for c in candles if c.get("close")]
+            return sorted(pts, key=lambda x: x["t"])
         except Exception as exc:
             log.warning("Coinbase price history failed %s: %s", product, exc)
             return []
@@ -282,21 +318,23 @@ class CoinbaseClient(BaseExchangeClient):
             "side":            side.upper(),
         }
 
+        base_dec, price_dec = await self._get_precision(product_id)
+
         if limit_price is not None:
             body["order_configuration"] = {
                 "limit_limit_gtc": {
-                    "base_size":   str(round(size, 8)),
-                    "limit_price": str(round(limit_price, 2)),
+                    "base_size":   self._fmt(size, base_dec),
+                    "limit_price": self._fmt(limit_price, price_dec),
                 }
             }
         elif quote_size is not None:
             # Market BUY with USD amount — cleaner than base_size for IOC orders
             body["order_configuration"] = {
-                "market_market_ioc": {"quote_size": str(round(quote_size, 2))}
+                "market_market_ioc": {"quote_size": self._fmt(quote_size, 2)}
             }
         else:
             body["order_configuration"] = {
-                "market_market_ioc": {"base_size": str(round(size, 8))}
+                "market_market_ioc": {"base_size": self._fmt(size, base_dec)}
             }
 
         try:
@@ -320,6 +358,42 @@ class CoinbaseClient(BaseExchangeClient):
         except httpx.HTTPStatusError as exc:
             log.error("Coinbase order failed %s: %s — %s", product_id, exc.response.status_code, exc.response.text)
             return {"order_id": order_id, "status": "error", "note": exc.response.text}
+
+    async def get_account_balance(self, currency: str) -> Optional[float]:
+        """Return the available balance for a given currency (e.g. 'ETH').
+        Returns None if the account isn't found or the call fails."""
+        path    = "/accounts"
+        headers = self._auth_headers("GET", path)
+        try:
+            resp = await self._client.get(f"{COINBASE_BASE}{path}", headers=headers)
+            if not resp.is_success:
+                log.error("Coinbase get_accounts HTTP %s: %s", resp.status_code, resp.text[:200])
+                return None
+            data     = resp.json()
+            accounts = data.get("accounts", [])
+            log.debug("Coinbase accounts returned %d entries", len(accounts))
+            for acct in accounts:
+                if acct.get("currency") == currency.upper():
+                    avail = acct.get("available_balance", {}).get("value")
+                    log.info("Coinbase %s available_balance=%s", currency, avail)
+                    return float(avail) if avail is not None else None
+            log.warning("Coinbase: no %s account found in %d accounts", currency, len(accounts))
+        except Exception as exc:
+            log.error("Coinbase get_accounts failed: %s", exc)
+        return None
+
+    async def get_order(self, order_id: str) -> Optional[dict]:
+        """Fetch a single order's status from Coinbase historical orders."""
+        path = f"/orders/historical/{order_id}"
+        try:
+            resp = await self._client.get(
+                f"{COINBASE_BASE}{path}", headers=self._auth_headers("GET", path)
+            )
+            resp.raise_for_status()
+            return resp.json().get("order")
+        except Exception as exc:
+            log.warning("Coinbase get_order failed %s: %s", order_id, exc)
+            return None
 
     async def cancel_order(self, order_id: str) -> dict:
         path    = "/orders/batch_cancel"

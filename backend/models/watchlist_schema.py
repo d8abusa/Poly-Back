@@ -13,6 +13,7 @@ class WatchlistItem(BaseModel):
     market_id: str
     market_title: str
     category: str = "Other"
+    exchange: str = "polymarket"
     added_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -21,6 +22,7 @@ class WatchlistCreate(BaseModel):
     market_id: str
     market_title: str
     category: str = "Other"
+    exchange: str = "polymarket"
 
 
 class AlertTrigger(BaseModel):

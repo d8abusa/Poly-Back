@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Query
 from ..services.fraser_service import get_fraser_service
 from ..services.fraser_nlp import analyze_document
 from ..services import policy_tracker as pt
+from ..services.fraser_modifier import get_fraser_context
 from ..services.db import get_cursor
 
 log    = logging.getLogger(__name__)
@@ -162,6 +163,27 @@ async def credibility():
         "score":   score,
         "label":   _cred_label(score),
         "color":   _cred_color(score),
+    }
+
+
+@router.get("/modifier")
+async def modifier_context():
+    """
+    Return the current FRASER sizing multiplier derived from the most recent
+    FOMC analysis. Returns null fields if no analysis is available yet.
+    """
+    ctx = get_fraser_context()
+    if ctx is None:
+        return {"available": False, "multiplier": 1.0, "summary": "No FRASER data"}
+    return {
+        "available":        True,
+        "multiplier":       ctx.multiplier,
+        "tone_score":       ctx.tone_score,
+        "tone_label":       ctx.tone_label,
+        "rate_direction":   ctx.rate_direction,
+        "guidance_strength": ctx.guidance_strength,
+        "doc_date":         ctx.doc_date,
+        "summary":          ctx.summary,
     }
 
 

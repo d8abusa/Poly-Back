@@ -9,23 +9,49 @@
 1. [Technical Requirements](#1-technical-requirements)
 2. [Glossary of Quantitative Terms](#2-glossary-of-quantitative-terms)
 3. [Embedded Strategies Reference](#3-embedded-strategies-reference)
+   - [3.1 Threshold](#31-threshold)
+   - [3.2 Momentum Chaser](#32-momentum-chaser)
+   - [3.3 Z-Score Reversion](#33-z-score-reversion)
+   - [3.4 Kelly Criterion](#34-kelly-criterion)
+   - [3.5 Mean Reversion](#35-mean-reversion)
+   - [3.6 Market Making](#36-market-making)
+   - [3.7 Structure Harvest](#37-structure-harvest-coming-soon)
+   - [3.8 Swing Reversion](#38-swing-reversion)
+   - [3.9 Short Momentum](#39-short-momentum)
+   - [3.10 Short Z-Score](#310-short-z-score)
+   - [3.11 XGBoost](#311-xgboost)
+   - [3.12 Resolution Momentum](#312-resolution-momentum)
+   - [3.13 Prob Anchoring](#313-prob-anchoring)
+   - [3.14 Liquidity Vacuum](#314-liquidity-vacuum)
+   - [3.15 Regime Rotation](#315-regime-rotation)
+   - [Creating Custom Strategies](#creating-custom-strategies)
 4. [Screen Walkthroughs](#4-screen-walkthroughs)
-   - [Backtest](#41-backtest-screen)
-   - [Signals](#42-signals-screen)
-   - [Positions](#43-positions-screen)
-   - [History](#44-history-screen)
-   - [Strategies](#45-strategies-screen)
-   - [Feed](#46-feed-screen)
-   - [Settings](#47-settings-panel)
-5. [Live Trading & Risk Management](#5-live-trading--risk-management)
-6. [Troubleshooting](#6-troubleshooting)
-   - [Before You Go Live](#51-before-you-go-live)
-   - [Execution Modes](#52-execution-modes)
-   - [Risk Guardrails](#53-risk-guardrails)
-   - [Stop-Loss Executor](#54-stop-loss-executor)
-   - [Kill Switch](#55-kill-switch)
-   - [Database Persistence](#56-database-persistence)
-   - [Exchange Configuration](#57-exchange-configuration)
+   - [4.1 Backtest Screen](#41-backtest-screen)
+   - [4.2 Optimizer Screen](#42-optimizer-screen)
+   - [4.3 Batch Wizard Screen](#43-batch-wizard-screen)
+   - [4.4 Insider Screen](#44-insider-screen)
+   - [4.5 Ops Screen](#45-ops-screen)
+   - [4.6 Runs Screen](#46-runs-screen)
+   - [4.7 Watchlist Screen](#47-watchlist-screen)
+   - [4.8 Signals Screen](#48-signals-screen)
+   - [4.9 Positions Screen](#49-positions-screen)
+   - [4.10 History Screen](#410-history-screen)
+   - [4.11 Strategies Screen](#411-strategies-screen)
+   - [4.12 Feed Screen](#412-feed-screen)
+   - [4.13 Settings Panel](#413-settings-panel)
+5. [Stocks & Equities](#5-stocks--equities)
+   - [Overview](#51-overview)
+   - [Account Tiers](#52-account-tiers)
+   - [Strategy Compatibility](#53-strategy-compatibility)
+   - [Price Scale Differences](#54-price-scale-differences)
+6. [Live Trading & Risk Management](#6-live-trading--risk-management)
+   - [Before You Go Live](#61-before-you-go-live)
+   - [Execution Modes](#62-execution-modes)
+   - [Risk Guardrails](#63-risk-guardrails)
+   - [Stop-Loss Executor](#64-stop-loss-executor)
+   - [Kill Switch](#65-kill-switch)
+   - [Database Persistence](#66-database-persistence)
+   - [Exchange Configuration](#67-exchange-configuration)
 7. [Kalshi Exchange Integration](#7-kalshi-exchange-integration)
    - [Overview](#71-overview)
    - [Account Setup](#72-account-setup)
@@ -49,6 +75,7 @@
    - [JWT Authentication](#92-jwt-authentication)
    - [Changing Your Password](#93-changing-your-password)
    - [Hardening Checklist](#94-hardening-checklist)
+10. [Troubleshooting](#10-troubleshooting)
 
 ---
 
@@ -89,13 +116,35 @@ cd ~/quant_project/Polymarket
 pip install -r backend/requirements.txt
 ```
 
-Start the backend:
+### Startup
+
+The recommended way to start both servers is:
 
 ```bash
-uvicorn backend.main:app --reload --port 8000
+cd ~/quant_project/Polymarket
+./start.sh
 ```
 
-API docs available at `http://localhost:8000/docs` once running.
+`./start.sh` launches both the backend and Vite frontend with TLS enabled via mkcert:
+
+- Backend: `https://localhost:8000`
+- Frontend: `https://localhost:5173`
+
+A **login screen** appears on first access. Enter the admin password set via `ADMIN_PASSWORD_HASH` in `.env`. The default password is `polyback` — change this before exposing the platform on any shared network (see [§9.3](#93-changing-your-password)).
+
+API docs available at `https://localhost:8000/docs` once running.
+
+Alternatively, start servers manually:
+
+```bash
+# Backend
+uvicorn backend.main:app --reload --port 8000
+
+# Frontend (separate terminal)
+cd frontend
+npm install
+npm run dev
+```
 
 ### Frontend
 
@@ -106,16 +155,6 @@ API docs available at `http://localhost:8000/docs` once running.
 | Vite | 5.x | Dev server + bundler |
 | React | 18.x | UI framework |
 | TypeScript | 5.x | Type checking |
-
-Install and start the frontend:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-App available at `http://localhost:5173`.
 
 ### Environment Configuration
 
@@ -133,7 +172,7 @@ KALSHI_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KE
 # Account value — used by risk manager for position sizing calculations
 ACCOUNT_VALUE=1000.00
 
-# Risk guardrail thresholds (see Section 5 for full details)
+# Risk guardrail thresholds (see Section 6 for full details)
 RISK_MAX_TRADE_PCT=0.05        # 5% of account per trade (soft limit)
 RISK_HARD_TRADE_PCT=0.10       # 10% of account per trade (hard halt)
 RISK_MAX_TOTAL_PCT=0.40        # 40% total capital at risk (soft limit)
@@ -326,7 +365,7 @@ The difference between 10-year and 2-year US Treasury yields. A negative spread 
 
 ## 3. Embedded Strategies Reference
 
-PolyBack ships with seven built-in strategies. All parameters are configurable via the Strategies screen; custom strategies can be created and edited without code.
+PolyBack ships with built-in strategies. All parameters are configurable via the Strategies screen; custom strategies can be created and edited without code.
 
 ---
 
@@ -618,6 +657,209 @@ Targets systematic wealth transfers from takers to makers documented across tens
 
 ---
 
+### 3.8 Swing Reversion
+
+| Attribute | Value |
+|-----------|-------|
+| Category | Mean Reversion |
+| Asset Types | Stocks only |
+| Risk | Medium |
+| Complexity | Moderate |
+
+**Concept**
+
+Anchors to a short simple moving average (SMA) instead of a rolling high, so entries remain valid even on gradually trending stocks. The strategy buys pullbacks to the SMA and exits when the price recovers above the entry price by a target percentage.
+
+**Entry/Exit Logic**
+
+```
+Entry:  p_t < SMA_window × (1 − entry_threshold)  AND  no open position
+Exit:   p_t ≥ p_entry × (1 + exit_threshold)   (take profit)
+Stop:   p_t ≤ p_entry × (1 − stop_loss)         (hard stop)
+```
+
+**Parameters**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| window | 10 | Period for the short SMA |
+| entry_threshold | 0.03 | Enter when price is this % below the SMA |
+| exit_threshold | 0.05 | Take profit when price recovers this % above entry |
+| stop_loss | 0.02 | Hard stop this % below entry price |
+
+**Edge & Best Use**
+Designed specifically for US equities where price oscillates around a slowly rising SMA. The SMA anchor prevents false entries caused by structural uptrends that would look like "extreme lows" on a flat-mean strategy.
+
+**Key Risks**
+Does not apply to prediction markets — 0–1 bounded prices do not exhibit the same SMA oscillation dynamics. This strategy is a no-op on Polymarket/Kalshi/Manifold/Coinbase prediction market contracts.
+
+---
+
+### 3.9 Short Momentum
+
+| Attribute | Value |
+|-----------|-------|
+| Category | Trend Following |
+| Risk | Medium-High |
+| Complexity | Moderate |
+
+**Concept**
+
+The mirror of Momentum Chaser. Profits from sustained downtrends by shorting when a price is falling and covering when it begins to rise. Includes a stop loss as a percentage rise above the short entry price.
+
+**Edge & Best Use**
+Captures sustained downside momentum in equities or prediction markets that are trending toward 0 (NO resolution). Most effective when a market is in a clear, sustained decline with no imminent catalyst for reversal.
+
+**Key Risks**
+Short positions carry asymmetric risk — price can rise indefinitely (in equities) or spike rapidly toward 1.0 on surprise positive news. Stop discipline is critical.
+
+---
+
+### 3.10 Short Z-Score
+
+| Attribute | Value |
+|-----------|-------|
+| Category | Statistical Arbitrage |
+| Risk | Medium |
+| Complexity | Advanced |
+
+**Concept**
+
+The mirror of Z-Score Reversion. Fades upward z-score spikes by selling when the current probability is abnormally high relative to its rolling mean — exploiting the same mean-reversion dynamic in the opposite direction.
+
+**Entry/Exit Logic**
+
+```
+z = (p_t − μ_window) / σ_window
+Entry:  z > +z_entry   AND  no open short position
+Exit:   z ≤ z_exit     OR   z > +z_stop  (runaway — stop out)
+```
+
+**Edge & Best Use**
+Captures the fade of sentiment-driven probability spikes. Useful when a market briefly trades well above its statistical fair value due to momentum or news overreaction.
+
+**Key Risks**
+Shorting in approaching-resolution markets is dangerous — a genuine positive update can push price toward 1.0 permanently. Use only in markets well before resolution where the spike is statistically unlikely to persist.
+
+---
+
+### 3.11 XGBoost
+
+| Attribute | Value |
+|-----------|-------|
+| Category | Machine Learning |
+| Risk | Medium-High |
+| Complexity | Expert |
+
+**Concept**
+
+A gradient-boosted tree model (XGBoost) trained on rolling price history features. The model trains on the first `xgb_train_frac` of the price history, then generates buy/sell signals on the remainder using learned patterns.
+
+**Features**
+
+The model uses features derived from the rolling price series:
+- Recent returns (various lookbacks)
+- Rolling volatility
+- Price momentum
+- Distance from rolling mean
+- 5 normalized FRED macro features (when FRED cache is populated — see [§8.7](#87-xgboost-macro-features))
+
+**Parameters**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| xgb_train_frac | 0.30 | Fraction of history used for training (remaining used for signals) |
+| min_confidence | 0.55 | Minimum predicted probability to act on a signal |
+| n_estimators | 50 | Number of trees in the gradient boosting ensemble |
+
+**Edge & Best Use**
+Captures nonlinear patterns in price dynamics that rule-based strategies miss. Best for liquid markets with at least 90 days of price history. Auto-retrains on each bar as new data arrives, keeping the model current.
+
+**Key Risks**
+Requires sufficient training data — markets with fewer than ~60 observations may produce unreliable models. Overfitting risk is mitigated by the `xgb_train_frac` hold-out but not eliminated. The Batch Wizard's overfit score provides a useful diagnostic.
+
+---
+
+### 3.12 Resolution Momentum
+
+| Attribute | Value |
+|-----------|-------|
+| Category | Event-Driven |
+| Risk | Medium |
+| Complexity | Moderate |
+
+**Concept**
+
+Captures the final-stage momentum that develops as prediction markets accelerate toward certainty in their final days. Markets within approximately 14 days of resolution often exhibit strong directional momentum as information consolidates and uncertainty resolves.
+
+**Edge & Best Use**
+Best applied to markets in their final 2 weeks before resolution where the probability has already established a directional trend. The compressed time horizon limits adverse selection risk while capturing the resolution run-up.
+
+**Key Risks**
+Does not work well on long-dated markets or markets where the outcome remains genuinely uncertain close to resolution. Unexpected reversals in the final days are rare but costly.
+
+---
+
+### 3.13 Prob Anchoring
+
+| Attribute | Value |
+|-----------|-------|
+| Category | Behavioral |
+| Risk | Low-Medium |
+| Complexity | Moderate |
+
+**Concept**
+
+Exploits the anchoring bias observed in prediction markets. Markets that open at psychologically salient round numbers (0.50, 0.25, 0.75) tend to remain anchored near those values longer than fundamentals justify — then snap sharply when the anchor finally breaks. The strategy positions ahead of the snap.
+
+**Edge & Best Use**
+Most effective in markets that opened near a round-number probability and have not yet moved significantly. The longer a market trades near its anchor, the larger the eventual snap tends to be.
+
+**Key Risks**
+Timing the snap is difficult. Markets can remain anchored for extended periods. Position sizing should be conservative given the uncertain timing of the breakout.
+
+---
+
+### 3.14 Liquidity Vacuum
+
+| Attribute | Value |
+|-----------|-------|
+| Category | Market Structure |
+| Risk | High |
+| Complexity | Expert |
+
+**Concept**
+
+Detects sudden bid-side liquidity withdrawals and takes the opposite side of the resulting price spike. When market makers pull bids simultaneously, price can gap sharply downward — the strategy fades this spike on the assumption it is noise-driven rather than information-driven.
+
+**Edge & Best Use**
+Short-lived liquidity gaps in otherwise stable markets. The edge depends on accurately distinguishing liquidity-vacuum spikes from genuine information shocks. Best paired with the Insider screen pre-trade check.
+
+**Key Risks**
+High false positive rate — not every bid withdrawal is noise. Information events and liquidity events look similar in the order book. Requires fast execution; the opportunity window is typically very short.
+
+---
+
+### 3.15 Regime Rotation
+
+| Attribute | Value |
+|-----------|-------|
+| Category | Macro / Multi-Strategy |
+| Risk | Medium |
+| Complexity | Advanced |
+
+**Concept**
+
+Rotates between momentum-based and mean-reversion-based sub-strategies depending on the detected market regime. When the regime is trending (recent price moving directionally), momentum logic applies. When the regime is range-bound (price oscillating near a mean), reversion logic applies. FRED macro data optionally modulates the regime detection.
+
+**Edge & Best Use**
+Avoids the single-regime failure mode of pure momentum or pure mean-reversion strategies. Adapts automatically as market character changes over the life of a contract.
+
+**Key Risks**
+Regime detection itself can be wrong, especially in the transition period between regimes. Rapid regime switching generates excessive churn and transaction costs.
+
+---
+
 ### Creating Custom Strategies
 
 The Strategies screen includes a **+ Custom Strategy** button. Any custom strategy can be:
@@ -634,7 +876,12 @@ Custom strategies participate in all backtest and signal-generation workflows al
 
 ### Navigation
 
-The top header contains a tab bar with six views. The active view is highlighted in green. The **exchange selector** (Polymarket / Kalshi / Manifold) in the header applies globally — switching exchanges reloads all market data.
+The top header contains a tab bar with multiple views. The active view is highlighted. The **exchange selector** in the header applies globally — switching exchanges reloads all market data.
+
+Exchange tabs use color coding:
+- **Blue**: Kalshi, Coinbase
+- **Green**: Stocks (Yahoo Finance), Robinhood
+- **Teal**: Polymarket
 
 ---
 
@@ -644,10 +891,11 @@ The primary workspace for strategy research. The layout has three columns:
 
 #### Left Column — Market Search
 
-- **Search box**: Filter markets by title text in real time
+- **Search box**: Filter markets by title text in real time. For Stocks and Robinhood tabs, this is a live ticker search box for any Yahoo Finance symbol.
 - **Category filter**: Narrow by Politics, Economics, Crypto, Sports, etc.
 - **Sort control**: Order by volume, liquidity, probability, or recency
-- **Market cards**: Each card shows title, current probability (color-coded: green = high, red = low), volume, and end date
+- **Market cards**: Each card shows title, current probability (color-coded: green = high, red = low, with delta indicator), volume, and end date
+- **Refresh button** (Stocks/Robinhood only): Fetches the latest quote from Yahoo Finance for the currently loaded market
 
 **Selecting a market**: Click a market card to load it into the detail panel. A highlighted border indicates the selected market.
 
@@ -671,9 +919,11 @@ Controls for configuring and running backtests:
 
 1. **Strategy selector**: Choose from all available strategies (built-in + custom)
 2. **Parameter sliders**: Live-adjustable sliders for every parameter of the selected strategy. Changes apply immediately to the next run.
-3. **Execution mode toggle**: Set to Confirm, Auto, or Paper
-4. **Queue display**: Shows all queued markets with a remove button per market
-5. **Run Backtest button**: Executes the selected strategy against all queued markets using their full price history
+3. **Slippage slider**: 0–50 basis points (default 5 bps). Models market impact on every fill. Higher values penalize strategies that trade in thin markets.
+4. **Account Tier selector** (Stocks and Robinhood tabs only): Standard, Margin, or Day Trading. Controls minimum holding period enforcement in the backtest engine to prevent simulated PDT-rule violations. See [§5.2](#52-account-tiers) for details.
+5. **Execution mode toggle**: Set to Confirm, Auto, or Paper
+6. **Queue display**: Shows all queued markets with a remove button per market
+7. **Run Backtest button**: Executes the selected strategy against all queued markets using their full price history
 
 #### Backtest Results
 
@@ -688,7 +938,179 @@ Results can be saved to the History panel via the clock icon (⏱) in the header
 
 ---
 
-### 4.2 Signals Screen
+### 4.2 Optimizer Screen
+
+Optuna-based single-strategy parameter optimizer. Searches the parameter space systematically to find the combination that maximizes Sharpe ratio on the selected market's price history.
+
+#### Setup
+
+1. **Select a strategy** from the dropdown
+2. **Select a single market** to optimize against
+3. **Trial budget** (10–500; default 50): Number of parameter combinations Optuna evaluates. Higher budgets find better optima at the cost of runtime.
+4. **Parallel jobs** (1–4): Number of threads used per optimization run. More threads reduce wall-clock time; diminishing returns above 2 on most machines.
+5. **Capital**: Starting capital for each trial backtest
+6. **Slippage**: Basis points applied to all fills during optimization
+
+#### Running
+
+Click **Run Optimizer**. A progress bar shows trial count in real time. Each trial runs a full backtest on the target market with a different parameter set. Optuna uses a Tree-structured Parzen Estimator (TPE) to intelligently sample the space.
+
+#### Results
+
+When complete, the results panel shows:
+- **Best parameter set**: Values for every parameter of the selected strategy
+- **Sharpe ratio**, **total return**, **win rate**, **trade count** for the best trial
+- Trial history chart: Sharpe ratio across all trials (shows convergence)
+
+#### Apply to Backtest
+
+Click **Apply to Backtest** to instantly load the best-performing parameter set into the Backtest panel. Switch to the Backtest screen and run immediately — no manual re-entry needed.
+
+---
+
+### 4.3 Batch Wizard Screen
+
+Walk-forward optimize-then-validate across multiple markets and strategies simultaneously. The Batch Wizard is the primary tool for finding strategies that generalize beyond in-sample performance.
+
+#### What It Does
+
+For each market × strategy combination:
+1. Splits the price history at the **Validation Days** boundary
+2. Runs Optuna optimization on the training window (never touching the validation data)
+3. Takes the best parameters and runs them forward on the out-of-sample validation window
+4. Reports both in-sample (IS) and out-of-sample (OOS) metrics, plus an overfit score
+
+#### Setup
+
+- **Market selection**: Checkboxes for each queued market. All are checked by default. Uncheck markets to exclude them.
+- **Strategy selection**: Checkboxes for each available strategy. All active strategies are checked by default.
+- **Validation Days slider** (14–365; default 90): The most recent N days are held out as the out-of-sample window. The optimizer never sees this data. Longer validation windows give more reliable OOS estimates but leave less data for training.
+- **Trial budget** and **parallel jobs**: Same as Optimizer screen.
+- **Capital** and **slippage** inputs.
+
+#### Running
+
+Click **Run Batch Wizard**. Progress updates show which market × strategy pair is currently being processed.
+
+#### Results (per market)
+
+Each market row expands to show:
+- **Data summary**: Train data points, validation data points, training days
+- **Per-strategy metrics**:
+  - OOS Sharpe, OOS return, win rate, trade count
+  - Best strategy for this market is highlighted
+  - **Overfit score** (IS Sharpe ÷ OOS Sharpe), color-coded:
+    - Green: < 0.5 — robust generalization
+    - Yellow: 0.5–1.5 — moderate; use with caution
+    - Red: > 1.5 — likely overfit; do not use live
+
+#### Apply Best Params
+
+Click **Apply Best Params** to load the winning strategy and its optimized parameter set directly into the Backtest panel. Provides a clean starting point for additional manual tuning or live deployment.
+
+---
+
+### 4.4 Insider Screen
+
+Smart money / order book anomaly scanner. Use as a pre-trade check before entering any position — elevated scores suggest informed order flow is present, which increases adverse selection risk.
+
+#### Usage
+
+1. Enter a **market ID** and select its **exchange**
+2. Click **Scan**
+3. Results return within a few seconds
+
+#### Output
+
+- **Smart Money Score** (0–100): Composite anomaly indicator
+  - 0–25: Noise — no unusual activity detected
+  - 26–50: Watch — mild imbalances present
+  - 51–75: Elevated — meaningful anomalies; proceed carefully
+  - 76–100: Strong — significant informed order flow signals
+- **Flags**: Which anomalies were detected
+  - `book_imbalance` — bid/ask volume ratio is unusually skewed
+  - `whale_trade` — a single trade accounted for an unusually large fraction of recent volume
+  - `price_velocity` — price moved faster than normal given observed volume
+  - `spread_widening` — spread expanded suddenly without a news event
+  - `book_thinness` — abnormally low bid-side depth
+- **Raw data**: Bid depth, ask depth, max trade as % of total volume, current spread, velocity range
+
+---
+
+### 4.5 Ops Screen
+
+Background job health monitor. Lists all registered background tasks and lets you manage them without restarting the server.
+
+#### Job List
+
+Each row shows:
+- **Name**: Task identifier
+- **Category**: Feed / Risk / Data / Signal / Alert
+- **Interval**: How often the task runs (e.g., every 30s)
+- **Status** indicator:
+  - Gray (idle): Not currently running
+  - Blue spinner (running): Currently executing
+  - Green (ok): Last run completed successfully
+  - Red (error): Last run failed
+  - Muted (disabled): Task is turned off
+- **Last run**: Timestamp of most recent execution
+- **Run count**: Total executions since server start
+- **Error count**: Cumulative failures
+
+#### Registered Jobs
+
+| Job | Category | Default Interval |
+|-----|----------|-----------------|
+| Feed poller | Feed | 10s |
+| Stop-loss executor | Risk | 30s |
+| FRED cache refresh | Data | Varies (weekly/monthly per series) |
+| Signal scanner | Signal | 60s |
+| Alert dispatcher | Alert | 15s |
+
+#### Controls
+
+- **Enable / Disable toggle**: Pause a job without restarting the server. Useful for temporarily disabling the stop-loss executor during maintenance.
+- **Run Now**: Trigger an immediate execution outside the normal schedule.
+- **Clear Error**: Reset the error state and error count for a job after investigating the failure.
+
+---
+
+### 4.6 Runs Screen
+
+Archive of batch backtest run history. All results are persisted in the database and survive server restarts.
+
+#### Run List
+
+Each entry in the list shows:
+- **Run date/time**
+- **Strategy** used
+- **Exchange** tested against
+- **Markets tested**: Titles of all markets in the batch
+- **Aggregate metrics**: Average return, average Sharpe, overall win rate
+
+#### Expanded View
+
+Clicking a run expands it to show:
+- Full per-market results table (same format as Backtest results)
+- Equity curves for each market
+- Trade log
+
+---
+
+### 4.7 Watchlist Screen
+
+User-curated market watchlist. Add markets from the Feed or Backtest screen and monitor them without running full backtests.
+
+#### Features
+
+- **Add markets**: Click the watchlist icon on any market card in the Feed or Backtest screen
+- **Live updates**: Probability and spread refresh automatically
+- **Alert configuration**: Set a probability threshold alert per market. When the market crosses the threshold, an alert fires to the Signals screen.
+- **Persistent**: Watchlist and alert configurations are stored in the database and survive restarts
+
+---
+
+### 4.8 Signals Screen
 
 Displays live trade signals generated by active strategies, along with an execution log.
 
@@ -710,7 +1132,7 @@ A scrolling log of all executions and dismissals with timestamps, prices, and ou
 
 ---
 
-### 4.3 Positions Screen
+### 4.9 Positions Screen
 
 Tracks all currently open positions across all strategies and markets.
 
@@ -728,7 +1150,7 @@ Use this screen to monitor risk exposure and identify positions that are approac
 
 ---
 
-### 4.4 History Screen
+### 4.10 History Screen
 
 A searchable archive of all completed backtest runs from the current session (or loaded from the history drawer).
 
@@ -744,7 +1166,7 @@ The **History Drawer** (clock icon in the top-right header) provides a compact l
 
 ---
 
-### 4.5 Strategies Screen
+### 4.11 Strategies Screen
 
 The strategy library and configuration center.
 
@@ -777,7 +1199,7 @@ Detailed view of a selected strategy, including:
 
 ---
 
-### 4.6 Feed Screen
+### 4.12 Feed Screen
 
 A real-time market data feed showing live prices, recent trades, and order book snapshots for the selected exchange.
 
@@ -797,7 +1219,7 @@ Selecting a market opens a live order book view (CLOB exchanges: Kalshi; AMM exc
 
 ---
 
-### 4.7 Settings Panel
+### 4.13 Settings Panel
 
 Accessible via the **⚙ gear icon** in the top-right header. Click the backdrop or the X to close.
 
@@ -821,18 +1243,22 @@ For each credential field:
 
 | Exchange | Status | Trading API |
 |----------|--------|-------------|
-| Coinbase Advanced Trade | **Primary — Live Trading** | JWT/ES256 auth, EC private key required |
-| Kalshi | Secondary — Read + Phase 2 Trading | REST v2 — API key required for orders |
-| Manifold | Research only — play money | REST v0 — fully public, no auth needed |
-| Polymarket | **Disabled** — geoblocked for US users | N/A |
+| Coinbase Advanced Trade | **Primary — Live Trading** | JWT/ES256, EC private key |
+| Kalshi | Secondary — Read + Trading | RSA-PSS, API key |
+| Yahoo Finance / Stocks | Read only — market data | Free public API, no key needed |
+| Robinhood | Read only — delegates to Yahoo | No auth (uses Yahoo data) |
+| Manifold | Research only — play money | REST v0, no auth |
+| Polymarket | **Read only — US accessible for data** | Public REST, no auth for data |
 
 **Coinbase** is the primary live trading venue. Authentication uses JWT tokens signed with an EC private key (ES256). The key name and private key are set via `COINBASE_KEY_NAME` and `COINBASE_PRIVATE_KEY` in `.env`.
 
-**Kalshi** is fully credentialed and available for market data. Order execution via Kalshi is planned for Phase 2.
+**Kalshi** is fully credentialed and available for market data and order execution.
+
+**Yahoo Finance / Stocks** and **Robinhood** both use Yahoo Finance as the data source. No API key is required.
 
 **Manifold** uses play money (Mana) — ideal for strategy prototyping at zero financial risk.
 
-**Polymarket** registration is blocked by geolocation for US users and is not available as a trading venue.
+**Polymarket** market data and price history are now accessible for backtesting and the live feed. Order execution on Polymarket remains blocked for US users.
 
 #### About Tab
 
@@ -840,23 +1266,92 @@ Displays the application version, backend status, API endpoint reference, and li
 
 ---
 
+## 5. Stocks & Equities
+
+### 5.1 Overview
+
+PolyBack supports US equities via two exchange tabs: **Stocks** (Yahoo Finance) and **Robinhood** (same data source — Yahoo Finance; Robinhood branding for user familiarity). Both tabs provide:
+
+- **Default universe**: ~20 major tickers (SPY, QQQ, AAPL, MSFT, AMZN, TSLA, NVDA, and others)
+- **Live search**: Search for any valid Yahoo Finance ticker via the search box in the left column
+- **5 years of daily price history**: Used directly by all backtest strategies
+- **Real-time quotes**: Delayed ~15 minutes (standard for free Yahoo Finance data)
+- **Refresh button**: In the left column — fetches the latest quote for the currently loaded ticker on demand
+
+Stock prices are displayed and stored as dollar amounts (not 0–1 probabilities). All strategy logic that references price automatically detects which mode it is in — see [§5.4](#54-price-scale-differences).
+
 ---
 
-## 5. Live Trading & Risk Management
+### 5.2 Account Tiers
+
+US equities trading is subject to regulatory minimum-hold rules that vary by account type. PolyBack models these in the backtest engine via the **Account Tier selector** in the Backtest panel (visible only when Stocks or Robinhood is selected).
+
+| Tier | Min Hold | Rule |
+|------|----------|------|
+| Standard | 3 trading days | T+3 settlement (cash accounts) |
+| Margin | 2 trading days | T+2 settlement (margin accounts) |
+| Day Trading | No restriction | PDT-exempt account (≥$25K margin) |
+
+Setting the correct account tier prevents the backtest engine from generating trades that would violate pattern day trading (PDT) rules on your actual account. If the simulated strategy generates a round-trip within the minimum hold period, the exit is deferred until the hold expires.
+
+> **Tip:** If you are backtesting on Stocks but have a standard cash account, always select Standard tier. A backtest result from Day Trading tier on a Standard account will overestimate performance by including trades your broker would not permit.
+
+---
+
+### 5.3 Strategy Compatibility
+
+Not all strategies are designed for equities. Some rely on 0–1 price bounds (e.g., Threshold) or order-book depth that equities do not provide (e.g., Market Making). The table below summarizes which strategies are valid for each asset type.
+
+| Strategy | Stocks | Prediction Markets |
+|----------|--------|--------------------|
+| Threshold | ✗ | ✓ |
+| Momentum Chaser | ✓ | ✓ |
+| Z-Score Reversion | ✓ | ✓ |
+| Kelly Criterion | ✓ | ✓ |
+| Mean Reversion | ✓ | ✓ |
+| Market Making | ✗ | ✓ |
+| Swing Reversion | ✓ (designed for stocks) | ✗ |
+| Short Momentum | ✓ | ✓ |
+| Short Z-Score | ✓ | ✓ |
+| XGBoost | ✓ | ✓ |
+| Resolution Momentum | ✗ | ✓ |
+| Prob Anchoring | ✗ | ✓ |
+| Liquidity Vacuum | ✗ | ✓ |
+| Regime Rotation | ✓ | ✓ |
+
+Strategies marked ✗ for a given asset type are silently skipped (zero trades) when run on incompatible markets. The Batch Wizard filters incompatible combinations automatically.
+
+---
+
+### 5.4 Price Scale Differences
+
+Prediction market prices are bounded 0–1 (probability). Stock prices are unbounded dollar amounts. The backtest engine automatically detects which mode it is in by checking `_is_stock` (price > 1.0 on any bar in the history).
+
+Key differences in how strategy parameters are applied:
+
+- **Threshold-style entries**: A `entry_threshold` of 0.15 means "buy below 15¢ probability" for a prediction market. For stocks, the same parameter is interpreted as a percentage deviation from a reference price (SMA, rolling mean, etc.) — not a dollar level.
+- **Stop loss**: For prediction markets, `stop_loss = 0.05` means exit at price 0.05. For stocks, `stop_loss = 0.02` means exit 2% below entry price.
+- **Z-score thresholds**: Identical interpretation for both asset types — z-scores are dimensionless.
+
+Parameter defaults shown in each strategy's reference entry (Section 3) are appropriate for prediction markets. When running on stocks, review the parameters — especially threshold-style entries — and adjust to reflect percentage-based logic. The Optimizer and Batch Wizard can find appropriate stock-specific parameters automatically.
+
+---
+
+## 6. Live Trading & Risk Management
 
 > **Warning:** Live trading involves real financial risk. Read this section fully before enabling Auto execution mode or placing any real orders.
 
 ---
 
-### 5.1 Before You Go Live
+### 6.1 Before You Go Live
 
 Complete this checklist before switching any strategy to Auto execution:
 
 ```
 [ ] Set ACCOUNT_VALUE in .env to your actual funded account balance
 [ ] Confirm COINBASE_KEY_NAME and COINBASE_PRIVATE_KEY are set correctly
-[ ] Verify auth_level = "full" at http://localhost:8000/api/positions/risk/status
-[ ] Review and accept the default risk limits (Section 5.3)
+[ ] Verify auth_level = "full" at https://localhost:8000/api/positions/risk/status
+[ ] Review and accept the default risk limits (Section 6.3)
 [ ] Run at least one backtest on the target strategy with realistic fee assumptions
 [ ] Start with a small account size — scale up only after live validation
 [ ] Keep STOP_LOSS_ENABLED=true (do not disable in production)
@@ -866,7 +1361,7 @@ Complete this checklist before switching any strategy to Auto execution:
 
 ---
 
-### 5.2 Execution Modes
+### 6.2 Execution Modes
 
 Every signal is dispatched in one of three modes, configurable per strategy or per signal:
 
@@ -891,7 +1386,7 @@ When you approve a signal in **Confirm** mode on Coinbase, the order is placed a
 
 ---
 
-### 5.3 Risk Guardrails
+### 6.3 Risk Guardrails
 
 PolyBack enforces five independent risk controls at all times. All thresholds are configurable in `.env`; the defaults below are conservative starting points.
 
@@ -928,7 +1423,7 @@ A restart resets the session counter — this is intentional. A restart after a 
 #### Checking Risk Status
 
 ```bash
-curl http://localhost:8000/api/positions/risk/status
+curl https://localhost:8000/api/positions/risk/status
 ```
 
 Returns:
@@ -955,7 +1450,7 @@ Returns:
 After any halt (size, capital, or drawdown), trading is suspended until explicitly resumed:
 
 ```bash
-curl -X POST http://localhost:8000/api/positions/risk/resume \
+curl -X POST https://localhost:8000/api/positions/risk/resume \
   -H "Content-Type: application/json" \
   -d '{"override_reason": "reviewed drawdown — resuming with reduced size"}'
 ```
@@ -964,7 +1459,7 @@ An `override_reason` is **required**. This creates an audit trail. Do not resume
 
 ---
 
-### 5.4 Stop-Loss Executor
+### 6.4 Stop-Loss Executor
 
 A background task runs from backend startup and monitors all open positions on a configurable interval (default: every 30 seconds).
 
@@ -1005,14 +1500,14 @@ STOP_LOSS_POLL_INTERVAL=30      # Seconds between checks (lower = more responsiv
 
 ---
 
-### 5.5 Kill Switch
+### 6.5 Kill Switch
 
 The kill switch is a hard emergency stop: it closes every open position immediately and halts the system.
 
 #### Activate via API
 
 ```bash
-curl -X POST "http://localhost:8000/api/positions/risk/kill?reason=emergency_stop"
+curl -X POST "https://localhost:8000/api/positions/risk/kill?reason=emergency_stop"
 ```
 
 #### What Happens
@@ -1031,14 +1526,14 @@ Do not resume trading until:
 - Resume is called with a documented `override_reason`
 
 ```bash
-curl -X POST http://localhost:8000/api/positions/risk/resume \
+curl -X POST https://localhost:8000/api/positions/risk/resume \
   -H "Content-Type: application/json" \
   -d '{"override_reason": "kill switch test complete — all positions confirmed closed"}'
 ```
 
 ---
 
-### 5.6 Database Persistence
+### 6.6 Database Persistence
 
 PolyBack supports two database backends: **SQLite** (default, zero-config) and **PostgreSQL** (recommended for production). Both persist the same data.
 
@@ -1121,7 +1616,7 @@ Then manually insert the relevant rows into PostgreSQL — the schema is identic
 
 ---
 
-### 5.7 Exchange Configuration
+### 6.7 Exchange Configuration
 
 #### Coinbase JWT Authentication
 
@@ -1137,7 +1632,7 @@ Required credentials in `.env`:
 To verify your credentials are loaded correctly:
 
 ```bash
-curl http://localhost:8000/api/positions/risk/status
+curl https://localhost:8000/api/positions/risk/status
 # Look for: "active_exchange": "coinbase"
 ```
 
@@ -1162,25 +1657,26 @@ With this setting, the defaults mean:
 ### Research & Backtesting
 
 ```
-[ ] Start backend:   uvicorn backend.main:app --reload --port 8000
-[ ] Start frontend:  cd frontend && npm run dev
-[ ] Open browser:    http://localhost:5173
-[ ] Select exchange: Coinbase / Kalshi / Manifold
-[ ] Browse markets:  Backtest → search / filter
-[ ] Select market:   Click a card to load price history
-[ ] Queue markets:   Click + on 1–5 markets
-[ ] Pick strategy:   Backtest panel → strategy dropdown
-[ ] Adjust params:   Slide sliders to tune entry/exit thresholds
-[ ] Run backtest:    Click "Run Backtest"
-[ ] Review results:  Check equity curve, total return, Sharpe, drawdown
-[ ] Iterate:         Change strategy or params → run again
+[ ] Start both servers:  ./start.sh
+[ ] Open browser:        https://localhost:5173
+[ ] Log in:              Enter your admin password at the login screen
+[ ] Select exchange:     Coinbase / Kalshi / Stocks / Manifold
+[ ] Browse markets:      Backtest → search / filter
+[ ] Select market:       Click a card to load price history
+[ ] Queue markets:       Click + on 1–5 markets
+[ ] Pick strategy:       Backtest panel → strategy dropdown
+[ ] Adjust params:       Slide sliders to tune entry/exit thresholds
+[ ] Set slippage:        Adjust bps slider (default 5 bps)
+[ ] Run backtest:        Click "Run Backtest"
+[ ] Review results:      Check equity curve, total return, Sharpe, drawdown
+[ ] Iterate:             Change strategy or params → run again
 ```
 
 ### Going Live
 
 ```
 [ ] Set ACCOUNT_VALUE in .env to funded account balance
-[ ] Verify credentials: curl http://localhost:8000/api/positions/risk/status
+[ ] Verify credentials: curl https://localhost:8000/api/positions/risk/status
 [ ] Confirm auth_level = "full" and active_exchange = "coinbase"
 [ ] Review risk limits — adjust RISK_* env vars if needed
 [ ] Start strategies in Confirm mode (not Auto)
@@ -1189,153 +1685,6 @@ With this setting, the defaults mean:
 [ ] Check risk status periodically during session
 [ ] Emergency stop: POST /api/positions/risk/kill
 ```
-
----
-
-## 6. Troubleshooting
-
-### 6.1 Frontend Not Loading (http://localhost:5173)
-
-**Symptom:** Browser shows "connection refused" or page doesn't load.
-
-**Cause:** The Vite dev server is not running. The backend and frontend are separate processes — both must be started independently.
-
-**Fix:**
-```bash
-cd ~/quant_project/Polymarket/frontend
-npm run dev
-```
-
-Or to run it in the background:
-```bash
-cd ~/quant_project/Polymarket/frontend
-nohup npm run dev > /tmp/polyback-frontend.log 2>&1 &
-```
-
-Confirm it's running:
-```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:5173
-# Should return: 200
-```
-
----
-
-### 6.2 Backend Not Responding (http://localhost:8000)
-
-**Symptom:** Frontend loads but shows no data, or API calls fail.
-
-**Fix:** Check if the backend is running:
-```bash
-curl -s http://localhost:8000/health
-# Should return: {"status":"healthy"}
-```
-
-If not running, start it:
-```bash
-cd ~/quant_project/Polymarket
-source venv/bin/activate
-nohup uvicorn backend.main:app --port 8000 > /tmp/polyback.log 2>&1 &
-```
-
-If port 8000 is already in use:
-```bash
-lsof -ti :8000 | xargs kill -9
-# Then restart the backend
-```
-
----
-
-### 6.3 Monitoring Live Activity
-
-**Real-time backend log** (stop-loss checks, orders, risk events, alerts):
-```bash
-tail -f /tmp/polyback.log
-```
-
-**Risk status snapshot:**
-```bash
-curl -s http://localhost:8000/api/positions/risk/status | python3 -m json.tool
-```
-
-**In the UI** (`http://localhost:5173`):
-| Tab | What to Watch |
-|-----|--------------|
-| Signals | Incoming signals queue, execution log, system alerts |
-| Positions | Open positions with live P&L |
-| History | Closed positions and realized P&L |
-| Feed | Live Coinbase market data |
-
----
-
-### 6.4 System Is Halted (No Orders Executing)
-
-**Symptom:** Orders are being blocked; risk status shows `"halted": true`.
-
-**Check what triggered it:**
-```bash
-curl -s http://localhost:8000/api/positions/risk/status | python3 -m json.tool
-# Check "halt_reason" field
-```
-
-**Common causes:**
-- Trade size exceeded the hard limit (10% of account)
-- Total capital at risk exceeded the hard limit (60% of account)
-- Session drawdown hit the circuit breaker (20% of account)
-- Kill switch was activated manually
-
-**To resume** (after investigating the cause):
-```bash
-curl -X POST http://localhost:8000/api/positions/risk/resume \
-  -H "Content-Type: application/json" \
-  -d '{"override_reason": "describe what you investigated and why resuming is safe"}'
-```
-
-> Do not resume without understanding the halt reason. The override_reason is required and creates an audit trail.
-
----
-
-### 6.5 Stop-Loss Exchange Failure Alert
-
-**Symptom:** Alert of type `stop_loss_exchange_failed` appears in the Signals screen.
-
-**What it means:** The stop-loss executor tried to close a position but the Coinbase order was rejected. The position is still open on the exchange.
-
-**Action required:**
-1. Log into your Coinbase account directly
-2. Manually close the position for the market shown in the alert
-3. Once confirmed closed, manually close it in the tracker:
-```bash
-curl -X POST "http://localhost:8000/api/positions/{position_id}/close?close_reason=manual_after_exchange_failure"
-```
-
----
-
-### 6.6 .env Changes Not Taking Effect
-
-**Cause:** Environment variables are read at backend startup. Changes to `.env` require a backend restart.
-
-```bash
-lsof -ti :8000 | xargs kill -9
-source venv/bin/activate
-nohup uvicorn backend.main:app --port 8000 > /tmp/polyback.log 2>&1 &
-```
-
-Verify the new values loaded:
-```bash
-curl -s http://localhost:8000/api/positions/risk/status | python3 -m json.tool
-```
-
----
-
-### 6.7 Database / State Questions
-
-| Question | Answer |
-|----------|--------|
-| Where is the database? | SQLite: `~/quant_project/Polymarket/polyback.db` · PostgreSQL: `polyback_db` (see §5.6) |
-| Positions lost after restart? | No — positions persist in the database |
-| Session drawdown reset after restart? | No — persisted to database since PostgreSQL migration |
-| Halt state reset after restart? | No — persisted to database; system stays halted across restarts |
-| How to back up the database? | SQLite: `cp polyback.db ~/backups/polyback_$(date +%Y%m%d).db` · PostgreSQL: `PGPASSWORD=your-password pg_dump -U polyback polyback_db > backup.sql` |
 
 ---
 
@@ -1476,12 +1825,12 @@ nohup venv/bin/uvicorn backend.main:app --port 8000 > /tmp/polyback.log 2>&1 &
 
 #### Step 4 — Verify via Settings Panel
 
-Open `http://localhost:5173` → Settings (⚙ gear icon) → Kalshi section. Both fields should show **Configured** and the auth level badge should display **Full Access**.
+Open `https://localhost:5173` → Settings (⚙ gear icon) → Kalshi section. Both fields should show **Configured** and the auth level badge should display **Full Access**.
 
 Alternatively, verify via API:
 
 ```bash
-curl -s http://localhost:8000/api/settings | python3 -m json.tool | grep -A5 '"kalshi"'
+curl -s https://localhost:8000/api/settings | python3 -m json.tool | grep -A5 '"kalshi"'
 # Look for: "auth_level": "full", "place_orders": true
 ```
 
@@ -1578,7 +1927,7 @@ Every Kalshi market has two tradeable sides: YES and NO. They always sum to ~100
 #### 1. Check authentication is loaded
 
 ```bash
-curl -s http://localhost:8000/api/settings | python3 -c "
+curl -s https://localhost:8000/api/settings | python3 -c "
 import sys, json
 s = json.load(sys.stdin)['kalshi']
 print('Auth level:   ', s['auth_level'])
@@ -1598,10 +1947,10 @@ Private key:   True
 
 #### 2. Verify market data is live
 
-Open the app at `http://localhost:5173`, select the **Kalshi** tab, and confirm markets load. If you see an error:
+Open the app at `https://localhost:5173`, select the **Kalshi** tab, and confirm markets load. If you see an error:
 
 ```bash
-curl -s "http://localhost:8000/api/markets?exchange=kalshi&limit=5" | python3 -m json.tool | head -20
+curl -s "https://localhost:8000/api/markets?exchange=kalshi&limit=5" | python3 -m json.tool | head -20
 ```
 
 A successful response returns `"count": 5` and a list of market objects.
@@ -1679,7 +2028,7 @@ Eight series are tracked. Each pull costs 2 API calls (metadata + observations).
 Check remaining budget:
 
 ```bash
-curl http://localhost:8000/api/fred/budget
+curl https://localhost:8000/api/fred/budget
 ```
 
 ---
@@ -1691,7 +2040,7 @@ The FRED cache is empty on first run. Seed all 8 series before expecting macro c
 ```bash
 for series in CPIAUCSL UNRATE PAYEMS FEDFUNDS DFEDTARU GDP T10Y2Y DTWEXBGS; do
   echo "Pulling $series..."
-  curl -s -X POST "http://localhost:8000/api/fred/$series/refresh" \
+  curl -s -X POST "https://localhost:8000/api/fred/$series/refresh" \
     | python3 -m json.tool | grep -E '"series_id"|"count"|"pull_count"'
   echo ""
 done
@@ -1708,7 +2057,7 @@ done
 The macro context engine reads the FRED cache and computes the current macroeconomic regime. No API calls are made — it is purely derived from cached data and is safe to call any time.
 
 ```bash
-curl http://localhost:8000/api/fred/macro-context
+curl https://localhost:8000/api/fred/macro-context
 ```
 
 **Response structure:**
@@ -1823,7 +2172,7 @@ For markets whose titles reference an economic threshold, the prior calculator d
 **Try it directly:**
 
 ```bash
-curl -s -X POST http://localhost:8000/api/fred/prior \
+curl -s -X POST https://localhost:8000/api/fred/prior \
   -H "Content-Type: application/json" \
   -d '{"title": "Will CPI exceed 3.5% in June?"}' | python3 -m json.tool
 ```
@@ -1893,7 +2242,7 @@ All features are scaled to approximately [−1, +1] to blend cleanly with the ex
 A cache-only snapshot of all tracked series — zero API cost, safe to call any time.
 
 ```bash
-curl http://localhost:8000/api/fred/dashboard | python3 -m json.tool
+curl https://localhost:8000/api/fred/dashboard | python3 -m json.tool
 ```
 
 Returns the latest and previous observation for each series, the period-to-period change, and a `stale` flag indicating whether a refresh is due. Use this to quickly check whether your FRED data is current before a trading session.
@@ -1972,7 +2321,9 @@ cd ~/quant_project/Polymarket
 
 ### 9.2 JWT Authentication
 
-All API routes (except `POST /api/auth/login`) require a valid **Bearer token**. The frontend handles this transparently — you see a login screen when no token is present, and the token is stored in `localStorage` for the session duration.
+The app shows a **login screen** at startup. If no valid token is present in `localStorage`, the login form is displayed before any other content. Sessions last **8 hours** by default (configurable via `JWT_EXPIRE_MINUTES` in `.env`).
+
+All API routes (except `POST /api/auth/login`) require a valid **Bearer token**. The frontend handles this transparently — the token is stored in `localStorage` for the session duration.
 
 **How it works:**
 
@@ -2074,3 +2425,180 @@ sudo ufw allow from 10.0.0.0/24 to any port 5173
 sudo ufw deny 8000
 sudo ufw deny 5173
 ```
+
+---
+
+## 10. Troubleshooting
+
+### 10.1 Frontend Not Loading (https://localhost:5173)
+
+**Symptom:** Browser shows "connection refused" or page doesn't load.
+
+**Cause:** The Vite dev server is not running. The backend and frontend are separate processes — both must be started independently (or via `./start.sh`).
+
+**Fix:**
+```bash
+cd ~/quant_project/Polymarket
+./start.sh
+```
+
+Or to start the frontend only:
+```bash
+cd ~/quant_project/Polymarket/frontend
+npm run dev
+```
+
+Or to run it in the background:
+```bash
+cd ~/quant_project/Polymarket/frontend
+nohup npm run dev > /tmp/polyback-frontend.log 2>&1 &
+```
+
+Confirm it's running:
+```bash
+curl -s -o /dev/null -w "%{http_code}" https://localhost:5173
+# Should return: 200
+```
+
+---
+
+### 10.2 Backend Not Responding (https://localhost:8000)
+
+**Symptom:** Frontend loads but shows no data, or API calls fail.
+
+**Fix:** Check if the backend is running:
+```bash
+curl -s https://localhost:8000/health
+# Should return: {"status":"healthy"}
+```
+
+If not running, start it:
+```bash
+cd ~/quant_project/Polymarket
+source venv/bin/activate
+nohup uvicorn backend.main:app --port 8000 > /tmp/polyback.log 2>&1 &
+```
+
+If port 8000 is already in use:
+```bash
+lsof -ti :8000 | xargs kill -9
+# Then restart the backend
+```
+
+---
+
+### 10.3 Monitoring Live Activity
+
+**Real-time backend log** (stop-loss checks, orders, risk events, alerts):
+```bash
+tail -f /tmp/polyback.log
+```
+
+**Risk status snapshot:**
+```bash
+curl -s https://localhost:8000/api/positions/risk/status | python3 -m json.tool
+```
+
+**In the UI** (`https://localhost:5173`):
+| Tab | What to Watch |
+|-----|--------------|
+| Signals | Incoming signals queue, execution log, system alerts |
+| Positions | Open positions with live P&L |
+| History | Closed positions and realized P&L |
+| Feed | Live Coinbase market data |
+
+---
+
+### 10.4 System Is Halted (No Orders Executing)
+
+**Symptom:** Orders are being blocked; risk status shows `"halted": true`.
+
+**Check what triggered it:**
+```bash
+curl -s https://localhost:8000/api/positions/risk/status | python3 -m json.tool
+# Check "halt_reason" field
+```
+
+**Common causes:**
+- Trade size exceeded the hard limit (10% of account)
+- Total capital at risk exceeded the hard limit (60% of account)
+- Session drawdown hit the circuit breaker (20% of account)
+- Kill switch was activated manually
+
+**To resume** (after investigating the cause):
+```bash
+curl -X POST https://localhost:8000/api/positions/risk/resume \
+  -H "Content-Type: application/json" \
+  -d '{"override_reason": "describe what you investigated and why resuming is safe"}'
+```
+
+> Do not resume without understanding the halt reason. The override_reason is required and creates an audit trail.
+
+---
+
+### 10.5 Stop-Loss Exchange Failure Alert
+
+**Symptom:** Alert of type `stop_loss_exchange_failed` appears in the Signals screen.
+
+**What it means:** The stop-loss executor tried to close a position but the Coinbase order was rejected. The position is still open on the exchange.
+
+**Action required:**
+1. Log into your Coinbase account directly
+2. Manually close the position for the market shown in the alert
+3. Once confirmed closed, manually close it in the tracker:
+```bash
+curl -X POST "https://localhost:8000/api/positions/{position_id}/close?close_reason=manual_after_exchange_failure"
+```
+
+---
+
+### 10.6 .env Changes Not Taking Effect
+
+**Cause:** Environment variables are read at backend startup. Changes to `.env` require a backend restart.
+
+```bash
+lsof -ti :8000 | xargs kill -9
+source venv/bin/activate
+nohup uvicorn backend.main:app --port 8000 > /tmp/polyback.log 2>&1 &
+```
+
+Verify the new values loaded:
+```bash
+curl -s https://localhost:8000/api/positions/risk/status | python3 -m json.tool
+```
+
+---
+
+### 10.7 Database / State Questions
+
+| Question | Answer |
+|----------|--------|
+| Where is the database? | SQLite: `~/quant_project/Polymarket/polyback.db` · PostgreSQL: `polyback_db` (see §6.6) |
+| Positions lost after restart? | No — positions persist in the database |
+| Session drawdown reset after restart? | No — persisted to database since PostgreSQL migration |
+| Halt state reset after restart? | No — persisted to database; system stays halted across restarts |
+| How to back up the database? | SQLite: `cp polyback.db ~/backups/polyback_$(date +%Y%m%d).db` · PostgreSQL: `PGPASSWORD=your-password pg_dump -U polyback polyback_db > backup.sql` |
+
+---
+
+### 10.8 Browser Shows Certificate Warning (TLS)
+
+**Symptom:** Browser shows "Your connection is not private" or similar when accessing `https://localhost:5173` or `https://localhost:8000`.
+
+**Cause:** The mkcert root CA is not trusted by the browser yet.
+
+**Fix (one-time):**
+```bash
+mkcert -install
+```
+
+If `mkcert -install` fails (no sudo):
+```bash
+certutil -d ~/.pki/nssdb -A -t "CT,," -n mkcert -i "$(mkcert -CAROOT)/rootCA.pem"
+```
+
+Then close and reopen the browser. The warning should not appear again for localhost addresses.
+
+---
+
+*PolyBack is a research, analysis, and live trading tool. Nothing in this guide constitutes financial advice. Prediction market trading involves real risk of financial loss. Always start with small position sizes and validate strategy performance before scaling.*

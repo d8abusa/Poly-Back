@@ -62,43 +62,20 @@ def _strip_html(html: str) -> str:
 
 def _parse_fomc_dates(html: str) -> list[str]:
     """
-    Extract FOMC meeting end-dates from the calendar HTML page.
-    Returns a list of ISO date strings (YYYY-MM-DD), most recent first.
+    Extract FOMC meeting dates from the calendar HTML page.
+    Reads the statement link hrefs (monetary{YYYYMMDD}a.htm) which are
+    already embedded in the calendar and give us the exact date used in
+    Fed URLs — no text parsing required.
+    Returns ISO date strings (YYYY-MM-DD), most recent first.
     """
-    # The calendar page has patterns like:
-    #   January 28-29, 2025  or  March 18-19, 2025
-    # We want the last day of each meeting
-    dates: list[str] = []
-
-    # Pattern: month day[-day], year
-    month_map = {
-        "january": 1, "february": 2, "march": 3, "april": 4,
-        "may": 5, "june": 6, "july": 7, "august": 8,
-        "september": 9, "october": 10, "november": 11, "december": 12,
-    }
-    pattern = re.compile(
-        r"(january|february|march|april|may|june|july|august|september|october|november|december)"
-        r"\s+(\d{1,2})(?:-(\d{1,2}))?,\s+(\d{4})",
-        re.IGNORECASE,
-    )
-    for m in pattern.finditer(html):
-        month_name, day1, day2, year = m.groups()
-        month = month_map[month_name.lower()]
-        end_day = int(day2) if day2 else int(day1)
+    compact_dates = re.findall(r"monetary(\d{8})a\.htm", html)
+    dates = []
+    for d in compact_dates:
         try:
-            d = date(int(year), month, end_day)
-            dates.append(d.isoformat())
+            dates.append(date(int(d[:4]), int(d[4:6]), int(d[6:8])).isoformat())
         except ValueError:
             pass
-
-    # Deduplicate and sort descending
-    seen: set[str] = set()
-    unique: list[str] = []
-    for d in sorted(set(dates), reverse=True):
-        if d not in seen:
-            seen.add(d)
-            unique.append(d)
-    return unique
+    return sorted(set(dates), reverse=True)
 
 
 # ── Main service ──────────────────────────────────────────────────────────────
@@ -266,35 +243,68 @@ class FraserService:
         return {"id": doc_id, "document_type": doc_type, "doc_date": doc_date,
                 "title": title, "word_count": word_count}
 
+    async def _beige_book_summary_urls(self, year: int) -> list[tuple[str, str, str]]:
+        """
+        Scrape the Fed's year-index page for Beige Book summary URLs.
+
+        Each <p> on the index page follows this pattern:
+            <p>January 15: <a href="...summary.htm">HTML</a> | <a href="...BeigeBook_20250115.pdf">PDF</a></p>
+
+        The PDF href contains the exact publication date (YYYYMMDD).
+        Returns list of (url, title, doc_date) tuples, most recent first.
+        """
+        index_url = f"{_FED_BASE}/monetarypolicy/beigebook{year}.htm"
+        try:
+            resp = await self._client.get(index_url)
+            if resp.status_code != 200:
+                return []
+        except Exception as exc:
+            log.warning("Beige Book index fetch failed %s: %s", index_url, exc)
+            return []
+
+        # Match summary URL and exact date from the PDF URL in the same <p> block
+        pattern = re.compile(
+            r'href="(/monetarypolicy/beigebook\d{6}-summary\.htm)'
+            r'.*?BeigeBook_(\d{8})\.pdf',
+            re.DOTALL,
+        )
+        results = []
+        for m in pattern.finditer(resp.text):
+            href, compact_date = m.group(1), m.group(2)
+            try:
+                doc_date = date(
+                    int(compact_date[:4]),
+                    int(compact_date[4:6]),
+                    int(compact_date[6:8]),
+                ).isoformat()
+            except ValueError:
+                continue
+            full_url = f"{_FED_BASE}{href}"
+            title = f"Beige Book – {doc_date}"
+            results.append((full_url, title, doc_date))
+
+        results.sort(key=lambda x: x[2], reverse=True)
+        return results
+
     async def _refresh_beige_book(self, existing: set[str]) -> list[dict]:
-        """Fetch recent Beige Book publications (8 per year)."""
+        """Fetch recent Beige Book publications by scraping the Fed year-index pages."""
         new_docs: list[dict] = []
         today = date.today()
-        # Beige Book months: Jan, Mar, Apr, Jun, Jul, Sep, Oct, Nov (approx)
-        bb_months = [
-            (today.year, m) for m in [1, 3, 4, 6, 7, 9, 10, 11]
-            if date(today.year, m, 1) <= today
-        ]
-        # Add previous year too
-        bb_months += [(today.year - 1, m) for m in [1, 3, 4, 6, 7, 9, 10, 11]]
 
-        month_abbr = {1:"jan",2:"feb",3:"mar",4:"apr",5:"may",6:"jun",
-                      7:"jul",8:"aug",9:"sep",10:"oct",11:"nov",12:"dec"}
-
-        for year, month in bb_months[:8]:
-            abbr = month_abbr[month]
-            url = f"{_FED_BASE}/monetarypolicy/beige-book-{year}{abbr}.htm"
-            if url not in existing:
-                doc_date = date(year, month, 15).isoformat()
+        for year in [today.year, today.year - 1]:
+            for url, title, doc_date in await self._beige_book_summary_urls(year):
+                if url in existing:
+                    continue
                 doc = await self._fetch_and_store(
                     url=url,
                     doc_type="beige_book",
                     doc_date=doc_date,
-                    title=f"Beige Book – {abbr.capitalize()} {year}",
+                    title=title,
                 )
                 if doc:
                     new_docs.append(doc)
                     existing.add(url)
+
         return new_docs
 
 
