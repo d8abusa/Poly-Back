@@ -48,8 +48,13 @@ def _infer_exchange(market_id: str) -> str:
     return "kalshi"  # default for prediction markets
 
 
+_STOCK_EXCHANGES      = {"yahoo", "robinhood", "webull"}
+_PREDICTION_EXCHANGES = {"kalshi", "polymarket", "manifold", ""}
+
 def _is_kalshi_signal(sig) -> bool:
     """True when the signal should execute on Kalshi."""
+    if sig.exchange in _STOCK_EXCHANGES:
+        return False
     return (sig.exchange == "kalshi") or (
         sig.exchange in ("polymarket", "")
         and not _is_coinbase_signal(sig.market_id)
@@ -57,9 +62,9 @@ def _is_kalshi_signal(sig) -> bool:
 
 
 def _asset_type(exchange: str) -> str:
-    if exchange == "yahoo":
+    if exchange in ("yahoo", "robinhood", "webull"):
         return "stock"
-    if exchange == "coinbase":
+    if exchange in ("coinbase", "robinhood_crypto"):
         return "crypto"
     return "prediction_market"
 
@@ -102,9 +107,16 @@ async def stage_from_backtest(req: StageFromBacktestRequest):
 
     # For crypto exchanges, the backtest engine clamps prices to [0,1] (probability scale).
     # Override with the live market price so the signal has valid dollar values.
-    if _is_coinbase_signal(req.market_id):
+    # Use exchange field as primary signal — don't rely solely on market_id format.
+    _is_rh_crypto = req.exchange == "robinhood_crypto"
+    _is_cb        = req.exchange == "coinbase" or (_is_coinbase_signal(req.market_id) and not _is_rh_crypto)
+    if _is_cb:
         client = get_exchange_client("coinbase")
         live_price = await client.get_last_price(_order_product_id(req.market_id))
+    elif _is_rh_crypto:
+        client = get_exchange_client("robinhood_crypto")
+        live_price = await client.get_last_price(req.market_id)
+    if _is_cb or _is_rh_crypto:
         if live_price is None or live_price <= 0.0:
             raise HTTPException(
                 status_code=502,
@@ -114,7 +126,7 @@ async def stage_from_backtest(req: StageFromBacktestRequest):
     else:
         entry = req.last_price
 
-    target  = _derive_target(req) if not _is_coinbase_signal(req.market_id) else _derive_crypto_target(req, entry)
+    target  = _derive_crypto_target(req, entry) if (_is_cb or _is_rh_crypto) else _derive_target(req)
     shares  = req.capital / entry
     edge    = (target - entry) / entry
     conf    = _derive_confidence(req.win_rate, req.sharpe_ratio)
@@ -162,11 +174,12 @@ async def stage_from_backtest(req: StageFromBacktestRequest):
         req.strategy, req.market_id, entry, int(req.capital), req.execution_mode,
     )
 
-    # Auto-notify Telegram for stock signals (no execution venue yet)
-    if req.exchange == "yahoo":
+    # Auto-notify Telegram for brokerage stock signals
+    if req.exchange in ("yahoo", "robinhood", "webull"):
         import asyncio as _asyncio
+        venue = {"robinhood": "Robinhood", "webull": "Webull"}.get(req.exchange, "Yahoo")
         _asyncio.create_task(
-            telegram_service.send_signal(sig, note="Stock signal — review and trade manually")
+            telegram_service.send_signal(sig, note=f"Stock signal via {venue} — review before approving")
         )
 
     return {"status": "staged", "signal": added}
@@ -215,7 +228,7 @@ async def approve_signal(
         raise HTTPException(status_code=404, detail="Signal not found or not pending")
 
     # ── Coinbase crypto signal → place real order FIRST, then commit ────────
-    if _is_coinbase_signal(sig.market_id):
+    if sig.exchange == "coinbase" or (_is_coinbase_signal(sig.market_id) and sig.exchange not in ("robinhood_crypto",)):
         client = get_exchange_client("coinbase")
         if client is None:
             raise HTTPException(status_code=503, detail="Coinbase client not configured")
@@ -272,6 +285,92 @@ async def approve_signal(
             "order":      order,
             "shares":     round(shares, 8),
             "size_usd":   size_usd,
+        }
+
+    # ── Robinhood stock signal → place equity order ────────────────────────
+    if sig.exchange == "robinhood":
+        client = get_exchange_client("robinhood")
+        if client is None:
+            raise HTTPException(status_code=503, detail="Robinhood client not configured")
+
+        size_usd = float(body.modified_size or sig.suggested_size)
+        shares   = round(size_usd / sig.entry_price, 6)
+
+        try:
+            order = await client.place_order(
+                product_id=sig.market_id,
+                side=sig.side,
+                size=shares,
+                limit_price=sig.entry_price if sig.execution_mode.value == "confirm" else None,
+            )
+        except Exception as exc:
+            log.error("Robinhood order failed for signal %s: %s", signal_id, exc)
+            raise HTTPException(status_code=502, detail=f"Robinhood order failed: {exc}")
+
+        if order.get("status") not in ("submitted", "confirmed"):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Robinhood order rejected: {order.get('note', 'unknown error')}",
+            )
+
+        sig = sq.approve_signal(signal_id, modified_size=body.modified_size)
+        pos = pt.open_position(sig, exchange="robinhood")
+        log.info(
+            "Robinhood order placed: %s %s %.6f shares @ %.4f  order_id=%s  pos=%s",
+            sig.market_id, sig.side, shares, sig.entry_price,
+            order.get("order_id", "?"), pos["id"],
+        )
+        return {
+            "status":      "approved",
+            "exchange":    "robinhood",
+            "signal":      sig,
+            "position_id": pos["id"],
+            "order":       order,
+            "shares":      shares,
+            "size_usd":    size_usd,
+        }
+
+    # ── Robinhood Crypto signal → official API (Ed25519) ──────────────────
+    if sig.exchange == "robinhood_crypto":
+        client = get_exchange_client("robinhood_crypto")
+
+        size_usd   = float(body.modified_size or sig.suggested_size)
+        is_limit   = sig.execution_mode.value == "confirm"
+        is_buy     = sig.side.upper() == "BUY"
+
+        try:
+            order = await client.place_order(
+                symbol=sig.market_id,
+                side=sig.side.lower(),
+                size=round(size_usd / sig.entry_price, 8) if (is_limit or not is_buy) else None,
+                quote_amount=size_usd if (not is_limit and is_buy) else None,
+                limit_price=sig.entry_price if is_limit else None,
+            )
+        except Exception as exc:
+            log.error("Robinhood Crypto order failed for signal %s: %s", signal_id, exc)
+            raise HTTPException(status_code=502, detail=f"Robinhood Crypto order failed: {exc}")
+
+        if order.get("status") not in ("submitted", "filled"):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Robinhood Crypto order rejected: {order.get('note', 'unknown error')}",
+            )
+
+        sig = sq.approve_signal(signal_id, modified_size=body.modified_size)
+        pos = pt.open_position(sig, exchange="robinhood_crypto",
+                               coinbase_order_id=order.get("order_id"),
+                               order_type="limit" if is_limit else "market")
+        log.info(
+            "Robinhood Crypto order placed: %s %s  order_id=%s  pos=%s",
+            sig.market_id, sig.side, order.get("order_id", "?"), pos["id"],
+        )
+        return {
+            "status":      "approved",
+            "exchange":    "robinhood_crypto",
+            "signal":      sig,
+            "position_id": pos["id"],
+            "order":       order,
+            "size_usd":    size_usd,
         }
 
     # ── Kalshi prediction market signal → place real order ────────────────

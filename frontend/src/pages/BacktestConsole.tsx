@@ -323,9 +323,9 @@ export default function BacktestConsole() {
 
           {/* Exchange selector */}
           <div style={{ display: "flex", gap: 2, marginLeft: 8 }}>
-            {(["kalshi", "coinbase", "yahoo", "robinhood", "polymarket"] as const).map(ex => {
-              const labels: Record<string, string> = { kalshi: "Kalshi", coinbase: "Coinbase", yahoo: "Stocks", robinhood: "Robinhood", polymarket: "Polymarket" };
-              const colors: Record<string, string> = { kalshi: "#3b82f6", coinbase: "#0052ff", yahoo: "#22c55e", robinhood: "#00c805", polymarket: "#00d4a8" };
+            {(["kalshi", "coinbase", "yahoo", "robinhood", "robinhood_crypto", "polymarket"] as const).map(ex => {
+              const labels: Record<string, string> = { kalshi: "Kalshi", coinbase: "Coinbase", yahoo: "Stocks", robinhood: "Robinhood", robinhood_crypto: "RH Crypto", polymarket: "Polymarket" };
+              const colors: Record<string, string> = { kalshi: "#3b82f6", coinbase: "#0052ff", yahoo: "#22c55e", robinhood: "#00c805", robinhood_crypto: "#00c805", polymarket: "#00d4a8" };
               const active = exchange === ex;
               return (
                 <button

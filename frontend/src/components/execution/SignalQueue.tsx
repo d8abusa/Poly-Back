@@ -47,7 +47,7 @@ export default function SignalQueue({ executionMode }: SignalQueueProps) {
 
   useEffect(() => {
     loadSignals();
-    const id = setInterval(loadSignals, 5000);
+    const id = setInterval(loadSignals, 20000);
     return () => clearInterval(id);
   }, []);
 
