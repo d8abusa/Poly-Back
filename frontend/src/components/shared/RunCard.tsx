@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { HistoryRun } from "../../types";
 import EquityChart from "../charts/EquityChart";
+import { fetchForecastGrade, type ForecastGrade } from "../../api/forecastClient";
 
 interface RunCardProps {
   run: HistoryRun;
@@ -8,6 +10,9 @@ interface RunCardProps {
 }
 
 export default function RunCard({ run, onLoad, onDelete }: RunCardProps) {
+  const [grade,       setGrade]       = useState<ForecastGrade | null>(null);
+  const [gradeLoading, setGradeLoading] = useState(false);
+  const [gradeError,  setGradeError]  = useState<string | null>(null);
   const ok = run.batch.results.filter(r => r.success);
   const avgReturn =
     ok.length > 0
@@ -20,6 +25,26 @@ export default function RunCard({ run, onLoad, onDelete }: RunCardProps) {
   const ts = new Date(run.runAt).toLocaleString("en-US", {
     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
   });
+
+  // Pick first successful market for grading
+  const firstMarket = ok[0];
+  const canGrade = !!firstMarket?.condition_id && !!run.exchange;
+
+  async function runGrade() {
+    if (!firstMarket?.condition_id) return;
+    setGradeLoading(true);
+    setGradeError(null);
+    try {
+      // Use the run date as the as_of split point (YYYY-MM-DD)
+      const asOf = run.runAt.slice(0, 10);
+      const g = await fetchForecastGrade(firstMarket.condition_id, run.exchange, asOf);
+      setGrade(g);
+    } catch (e: any) {
+      setGradeError(e.message ?? "Grade failed");
+    } finally {
+      setGradeLoading(false);
+    }
+  }
 
   return (
     <div style={{
@@ -64,7 +89,7 @@ export default function RunCard({ run, onLoad, onDelete }: RunCardProps) {
       </div>
 
       {/* Action buttons */}
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
         <button
           onClick={() => onLoad(run)}
           style={{
@@ -75,6 +100,42 @@ export default function RunCard({ run, onLoad, onDelete }: RunCardProps) {
         >
           Load
         </button>
+
+        {/* Forecast grade dot / button */}
+        {canGrade && (
+          grade ? (
+            <div
+              title={`Forecast Grade: ${grade.label.toUpperCase()} (${grade.score}/100)\nDirection: ${grade.direction_correct ? "✓" : "✗"}  CI: ${grade.within_ci ? "✓" : "✗"}  MAPE: ${grade.mape_pct.toFixed(1)}%`}
+              style={{
+                width: 14, height: 14, borderRadius: "50%",
+                background: grade.color,
+                flexShrink: 0,
+                cursor: "default",
+                boxShadow: `0 0 4px ${grade.color}88`,
+              }}
+            />
+          ) : (
+            <button
+              onClick={runGrade}
+              disabled={gradeLoading}
+              title="Grade forecast accuracy at this run date"
+              style={{
+                padding: "4px 8px", borderRadius: 4,
+                border: "1px solid rgba(234,179,8,0.3)",
+                background: "rgba(234,179,8,0.06)", color: "#eab308", fontSize: 9,
+                fontFamily: "IBM Plex Mono, monospace",
+                cursor: gradeLoading ? "default" : "pointer",
+                flexShrink: 0,
+              }}
+            >
+              {gradeLoading ? "…" : "Grade"}
+            </button>
+          )
+        )}
+        {gradeError && (
+          <div style={{ fontSize: 8, color: "#ef4444", flex: 1 }} title={gradeError}>err</div>
+        )}
+
         <button
           onClick={() => onDelete(run.id)}
           style={{

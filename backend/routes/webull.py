@@ -1,92 +1,93 @@
 """
-Webull setup and account routes.
+Webull routes.
 
-  POST /api/webull/setup/request-mfa   — send MFA code to registered email
-  POST /api/webull/setup/confirm       — complete first-time login with emailed code
-  GET  /api/webull/account             — buying power, equity, cash
-  GET  /api/webull/status              — whether session token exists
+  GET  /api/webull/status          — credential check (keys set, account_id set)
+  GET  /api/webull/account         — fetch account profile (buying power, account_id)
+  POST /api/webull/verify          — test-sign a request to confirm keys work
 """
 
-import asyncio
 import logging
 import os
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 log    = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webull", tags=["webull"])
 
-_TOKEN_PATH = os.path.expanduser("~/.tokens/webull_client.pkl")
-
-
-class MfaConfirmRequest(BaseModel):
-    code: str
-
 
 @router.get("/status")
 async def webull_status():
-    """Returns whether a saved session token exists."""
-    token_exists = os.path.exists(_TOKEN_PATH)
+    """Returns whether credentials are configured."""
+    app_key    = os.getenv("WEBULL_APP_KEY",    "").strip()
+    app_secret = os.getenv("WEBULL_APP_SECRET", "").strip()
+    account_id = os.getenv("WEBULL_ACCOUNT_ID", "").strip()
     return {
-        "token_saved":  token_exists,
-        "email":        os.getenv("WEBULL_EMAIL", ""),
-        "trade_pin_set": bool(os.getenv("WEBULL_TRADE_PIN", "").strip()),
+        "app_key_set":    bool(app_key),
+        "app_secret_set": bool(app_secret),
+        "account_id_set": bool(account_id),
+        "app_key_preview": f"{app_key[:6]}…" if app_key else None,
         "message": (
-            "Session token found — server will log in automatically on next restart."
-            if token_exists else
-            "No session token. Call /setup/request-mfa then /setup/confirm to authenticate."
+            "Credentials configured — ready to trade."
+            if app_key and app_secret and account_id else
+            "Missing credentials. Set WEBULL_APP_KEY, WEBULL_APP_SECRET, "
+            "and WEBULL_ACCOUNT_ID in .env, then call /account to fetch your account_id."
         ),
     }
 
 
-@router.post("/setup/request-mfa")
-async def request_mfa():
-    """
-    Trigger Webull to email an MFA code to your registered email address.
-    Call this once, then immediately call /setup/confirm with the code.
-    """
-    loop = asyncio.get_event_loop()
-    try:
-        await loop.run_in_executor(None, _do_request_mfa)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    email = os.getenv("WEBULL_EMAIL", "")
-    return {"status": "sent", "message": f"MFA code sent to {email}. Check your inbox and call /setup/confirm."}
-
-
-@router.post("/setup/confirm")
-async def confirm_mfa(body: MfaConfirmRequest):
-    """
-    Complete first-time login with the emailed MFA code.
-    Session token is saved to ~/.tokens/webull_client.pkl.
-    """
-    if not body.code.strip():
-        raise HTTPException(status_code=400, detail="MFA code is required")
-    loop = asyncio.get_event_loop()
-    try:
-        await loop.run_in_executor(None, _do_confirm_mfa, body.code.strip())
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    return {"status": "authenticated", "message": "Webull session saved. You won't need to do this again."}
-
-
 @router.get("/account")
 async def account_info():
-    """Return Webull account balance and buying power."""
+    """
+    Fetch account profile from Webull.
+    Also returns account_id — copy this into WEBULL_ACCOUNT_ID in .env.
+    """
     from ..services.webull_client import get_webull_client
     client = get_webull_client()
-    info = await client.get_account_info()
+    try:
+        info = await client.get_account_info()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Webull API error: {exc}")
     return info
 
 
-# ── Sync helpers (run in executor) ────────────────────────────────────────────
+@router.post("/verify")
+async def verify_credentials():
+    """
+    Sign a test request and attempt a lightweight API call to confirm
+    the App Key + App Secret are valid.
+    """
+    from ..services.webull_client import _sign_headers, _QUOTES_BASE
+    import httpx
 
-def _do_request_mfa():
-    from ..services.webull_client import request_mfa_sync
-    request_mfa_sync()
+    app_key = os.getenv("WEBULL_APP_KEY", "").strip()
+    if not app_key:
+        raise HTTPException(status_code=400, detail="WEBULL_APP_KEY not set in .env")
 
-
-def _do_confirm_mfa(code: str):
-    from ..services.webull_client import confirm_mfa_sync
-    confirm_mfa_sync(code)
+    uri = "/quotes/ticker/queryTickers"
+    params = {"tickerIds": "AAPL", "includeSecu": "1"}
+    try:
+        headers = _sign_headers("GET", uri, body=None, queries=params)
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(f"{_QUOTES_BASE}{uri}", headers=headers, params=params)
+        if r.status_code == 200:
+            data = r.json()
+            tickers = data.get("data") or data.get("tickerList") or []
+            price = None
+            if tickers:
+                t = tickers[0]
+                price = t.get("close") or t.get("pPrice")
+            return {
+                "status":  "ok",
+                "message": "Credentials valid — Webull API responding.",
+                "aapl_price": price,
+            }
+        else:
+            return {
+                "status":  "error",
+                "http_status": r.status_code,
+                "body": r.text[:500],
+            }
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Webull verify failed: {exc}")

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { Market, HistoryPoint, TradeEntry } from "../../types";
 import { probColor, catColor, fmtVol } from "../../utils";
 import PriceChart from "../charts/PriceChart";
+import ForecastPanel from "../forecast/ForecastPanel";
 
 interface MarketDetailProps {
   selectedMarket: Market | null;
@@ -97,7 +98,7 @@ export default function MarketDetail({
   const valClass = pc === "hi" ? "g" : pc === "lo" ? "r" : "t";
 
   return (
-    <div className="fade-in" style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
+    <div className="fade-in" style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
       <div className="detail-header">
         <div className="detail-title">{m.title}</div>
         <div className="detail-meta">
@@ -224,6 +225,9 @@ export default function MarketDetail({
           );
         })()}
       </div>
+
+      {/* ── 7-Day Price Forecast ─────────────────────────────────────────────── */}
+      <ForecastPanel market={m} />
     </div>
   );
 }

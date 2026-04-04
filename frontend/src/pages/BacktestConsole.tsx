@@ -322,30 +322,55 @@ export default function BacktestConsole() {
           <div className="header-sub">Market Search</div>
 
           {/* Exchange selector */}
-          <div style={{ display: "flex", gap: 2, marginLeft: 8 }}>
-            {(["kalshi", "coinbase", "yahoo", "robinhood", "robinhood_crypto", "polymarket"] as const).map(ex => {
-              const labels: Record<string, string> = { kalshi: "Kalshi", coinbase: "Coinbase", yahoo: "Stocks", robinhood: "Robinhood", robinhood_crypto: "RH Crypto", polymarket: "Polymarket" };
-              const colors: Record<string, string> = { kalshi: "#3b82f6", coinbase: "#0052ff", yahoo: "#22c55e", robinhood: "#00c805", robinhood_crypto: "#00c805", polymarket: "#00d4a8" };
-              const active = exchange === ex;
-              return (
-                <button
-                  key={ex}
-                  onClick={() => { setExchange(ex); setMarkets([]); setSelectedMarket(null); setQueuedMarkets([]); }}
+          {(() => {
+            const exchanges = [
+              { id: "kalshi",          label: "Kalshi",      color: "#3b82f6" },
+              { id: "coinbase",        label: "Coinbase",    color: "#0052ff" },
+              { id: "yahoo",           label: "Stocks",      color: "#22c55e" },
+              { id: "robinhood",       label: "Robinhood",   color: "#00c805" },
+              { id: "robinhood_crypto",label: "RH Crypto",   color: "#00c805" },
+              { id: "polymarket",      label: "Polymarket",  color: "#00d4a8" },
+              { id: "webull",          label: "Webull",      color: "#ff6b35" },
+            ] as const;
+            const activeColor = exchanges.find(e => e.id === exchange)?.color ?? "var(--accent)";
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
+                <span style={{ fontSize: 9, color: "var(--muted)", fontFamily: "IBM Plex Mono, monospace", textTransform: "uppercase", letterSpacing: 1 }}>
+                  Exchange
+                </span>
+                <select
+                  value={exchange}
+                  onChange={e => {
+                    const ex = e.target.value as ExchangeId;
+                    setExchange(ex);
+                    setMarkets([]);
+                    setSelectedMarket(null);
+                    setQueuedMarkets([]);
+                  }}
                   style={{
-                    padding: "3px 10px", borderRadius: 4, cursor: "pointer",
-                    fontFamily: "IBM Plex Mono, monospace", fontSize: 10,
-                    border: `1px solid ${active ? `${colors[ex]}50` : "var(--border2)"}`,
-                    background: active ? `${colors[ex]}12` : "var(--surface2)",
-                    color: active ? colors[ex] : "var(--muted2)",
-                    fontWeight: active ? 700 : 400,
-                    transition: "all 0.12s",
+                    padding: "3px 24px 3px 8px",
+                    borderRadius: 4,
+                    border: `1px solid ${activeColor}50`,
+                    background: "var(--surface2)",
+                    color: activeColor,
+                    fontFamily: "IBM Plex Mono, monospace",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    outline: "none",
+                    appearance: "none",
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E")`,
+                    backgroundRepeat: "no-repeat",
+                    backgroundPosition: "right 7px center",
                   }}
                 >
-                  {labels[ex]}
-                </button>
-              );
-            })}
-          </div>
+                  {exchanges.map(ex => (
+                    <option key={ex.id} value={ex.id}>{ex.label}</option>
+                  ))}
+                </select>
+              </div>
+            );
+          })()}
 
           {/* Account tier selector — stocks only */}
           {(exchange === "yahoo" || exchange === "robinhood") && (() => {

@@ -2,7 +2,7 @@
 
 export type ExecutionMode  = "auto" | "confirm" | "alert_only";
 export type SignalStatus   = "pending" | "approved" | "rejected" | "auto_executed";
-export type ExchangeId     = "coinbase" | "kalshi" | "manifold" | "polymarket" | "yahoo" | "robinhood" | "robinhood_crypto";
+export type ExchangeId     = "coinbase" | "kalshi" | "manifold" | "polymarket" | "yahoo" | "robinhood" | "robinhood_crypto" | "webull";
 
 export interface ExchangeInfo {
   id:          ExchangeId;
