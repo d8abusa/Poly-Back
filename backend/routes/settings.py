@@ -159,7 +159,29 @@ async def get_settings():
         "kalshi":     _kalshi_status(env),
         "manifold":   _manifold_status(env),
         "polymarket": _polymarket_status(env),
+        "automation": _automation_status(env),
     }
+
+
+def _automation_status(env: dict) -> dict:
+    return {
+        "coinbase_auto_execute": env.get("COINBASE_AUTO_EXECUTE", "false").lower() == "true",
+    }
+
+
+@router.get("/automation")
+async def get_automation():
+    """Return automation toggle states."""
+    return _automation_status(_read_env())
+
+
+@router.post("/automation/coinbase")
+async def set_coinbase_automation(enabled: bool):
+    """Enable or disable autonomous order execution for Coinbase swing pipeline."""
+    _write_env({"COINBASE_AUTO_EXECUTE": "true" if enabled else "false"})
+    os.environ["COINBASE_AUTO_EXECUTE"] = "true" if enabled else "false"
+    log.info("Coinbase auto-execute set to %s", enabled)
+    return {"coinbase_auto_execute": enabled}
 
 
 class CoinbaseCredsRequest(BaseModel):

@@ -41,6 +41,66 @@ _DEFAULT_UNIVERSE = [
     ("BA",    "Boeing Company"),
 ]
 
+_CRYPTO_UNIVERSE = [
+    ("BTC-USD",  "Bitcoin"),
+    ("ETH-USD",  "Ethereum"),
+    ("SOL-USD",  "Solana"),
+    ("BNB-USD",  "BNB"),
+    ("XRP-USD",  "XRP"),
+    ("ADA-USD",  "Cardano"),
+    ("AVAX-USD", "Avalanche"),
+    ("DOGE-USD", "Dogecoin"),
+    ("DOT-USD",  "Polkadot"),
+    ("LINK-USD", "Chainlink"),
+    ("MATIC-USD","Polygon"),
+    ("LTC-USD",  "Litecoin"),
+    ("UNI7083-USD", "Uniswap"),
+    ("ATOM-USD", "Cosmos"),
+    ("XLM-USD",  "Stellar"),
+    ("NEAR-USD", "NEAR Protocol"),
+    ("ARB11841-USD", "Arbitrum"),
+    ("OP-USD",   "Optimism"),
+    ("SUI20947-USD", "Sui"),
+    ("APT21794-USD", "Aptos"),
+]
+
+_FUTURES_UNIVERSE = [
+    ("ES=F",  "S&P 500 Futures"),
+    ("NQ=F",  "Nasdaq 100 Futures"),
+    ("YM=F",  "Dow Jones Futures"),
+    ("RTY=F", "Russell 2000 Futures"),
+    ("GC=F",  "Gold Futures"),
+    ("SI=F",  "Silver Futures"),
+    ("CL=F",  "Crude Oil Futures"),
+    ("NG=F",  "Natural Gas Futures"),
+    ("ZB=F",  "US 30-Year T-Bond Futures"),
+    ("ZN=F",  "US 10-Year Note Futures"),
+    ("ZC=F",  "Corn Futures"),
+    ("ZS=F",  "Soybean Futures"),
+    ("ZW=F",  "Wheat Futures"),
+    ("HG=F",  "Copper Futures"),
+    ("6E=F",  "Euro FX Futures"),
+    ("6J=F",  "Japanese Yen Futures"),
+    ("6B=F",  "British Pound Futures"),
+    ("BTC=F", "Bitcoin CME Futures"),
+    ("ETH=F", "Ether CME Futures"),
+    ("MES=F", "Micro S&P 500 Futures"),
+]
+
+_UNIVERSE_BY_TYPE: dict[str, list] = {
+    "STOCK":   _DEFAULT_UNIVERSE,
+    "CRYPTO":  _CRYPTO_UNIVERSE,
+    "FUTURES": _FUTURES_UNIVERSE,
+    "OPTIONS": _DEFAULT_UNIVERSE,
+}
+
+_QUOTE_TYPE_BY_INSTRUMENT: dict[str, str] = {
+    "STOCK":   "EQUITY",
+    "CRYPTO":  "CRYPTOCURRENCY",
+    "FUTURES": "FUTURE",
+    "OPTIONS": "EQUITY",
+}
+
 _INTERVAL_MAP = {
     "1m":  ("1m",  "5d"),
     "5m":  ("5m",  "60d"),
@@ -90,6 +150,10 @@ class YahooFinanceClient(BaseExchangeClient):
 
         loop = asyncio.get_event_loop()
 
+        instrument_type = (kwargs.get("instrument_type") or "STOCK").upper()
+        universe  = _UNIVERSE_BY_TYPE.get(instrument_type, _DEFAULT_UNIVERSE)
+        qt_filter = _QUOTE_TYPE_BY_INSTRUMENT.get(instrument_type, "EQUITY")
+
         # ── 1. Resolve ticker list ────────────────────────────────────────────
         if q:
             def _search():
@@ -101,7 +165,7 @@ class YahooFinanceClient(BaseExchangeClient):
                             r.get("longname") or r.get("shortname") or r["symbol"],
                         )
                         for r in res.quotes
-                        if r.get("quoteType") == "EQUITY" and r.get("isYahooFinance")
+                        if r.get("quoteType") == qt_filter and r.get("isYahooFinance")
                     ][:limit]
                 except Exception as exc:
                     log.warning("yf.Search failed for %r: %s", q, exc)
@@ -109,7 +173,7 @@ class YahooFinanceClient(BaseExchangeClient):
 
             pairs = await loop.run_in_executor(None, _search)
         else:
-            pairs = _DEFAULT_UNIVERSE[offset : offset + limit]
+            pairs = universe[offset : offset + limit]
 
         if not pairs:
             return []
@@ -164,16 +228,17 @@ class YahooFinanceClient(BaseExchangeClient):
         return result
 
     def normalize_market(self, raw: dict) -> dict:
-        ticker  = raw.get("ticker", "")
-        price   = raw.get("price", 0.0)
-        history = raw.get("history", [])
+        ticker    = raw.get("ticker", "")
+        price     = raw.get("price", 0.0)
+        history   = raw.get("history", [])
+        category  = raw.get("category", "Stocks")
         prev_prob = round(history[-2]["p"], 2) if len(history) >= 2 else None
         return {
             "id":           ticker,
             "condition_id": ticker,
             "token_id":     ticker,
             "title":        f"{ticker} — {raw.get('name', ticker)}",
-            "category":     "Stocks",
+            "category":     category,
             "prob":         round(price, 2),
             "prev_prob":    prev_prob,
             "volume":       raw.get("volume_24h", 0.0),

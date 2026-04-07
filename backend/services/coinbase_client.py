@@ -158,6 +158,18 @@ class CoinbaseClient(BaseExchangeClient):
         price      = float(raw.get("price", 0) or 0)
         is_stock   = base not in _CRYPTO_BASES
         category   = "Stocks" if is_stock else "Crypto"
+
+        # Derive prev_prob from 24h percentage change so volatility calcs work
+        pct_str   = raw.get("price_percentage_change_24h") or raw.get("price_percentage_change_24H")
+        prev_prob = None
+        if pct_str is not None and price > 0:
+            try:
+                pct = float(pct_str)
+                if pct != -100:
+                    prev_prob = round(price / (1 + pct / 100), 8)
+            except (ValueError, ZeroDivisionError):
+                pass
+
         return {
             "id":           product_id,
             "condition_id": product_id,
@@ -165,6 +177,7 @@ class CoinbaseClient(BaseExchangeClient):
             "title":        raw.get("display_name") or product_id,
             "category":     category,
             "prob":         round(price, 8),
+            "prev_prob":    prev_prob,
             "volume":       float(raw.get("volume_24h", 0) or 0),
             "liquidity":    0.0,
             "resolved":     False,
