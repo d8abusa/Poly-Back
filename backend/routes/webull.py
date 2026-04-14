@@ -66,7 +66,7 @@ async def verify_credentials():
         raise HTTPException(status_code=400, detail="WEBULL_APP_KEY not set in .env")
 
     uri = "/quotes/ticker/queryTickers"
-    params = {"tickerIds": "AAPL", "includeSecu": "1"}
+    params = {"tickers": "AAPL", "includeSecu": "1"}
     try:
         headers = _sign_headers("GET", uri, body=None, queries=params)
         async with httpx.AsyncClient(timeout=8.0) as client:

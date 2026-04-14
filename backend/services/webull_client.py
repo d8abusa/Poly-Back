@@ -40,7 +40,7 @@ from .yahoo_client import YahooFinanceClient
 log = logging.getLogger(__name__)
 
 _BASE = "https://api.webull.com"
-_QUOTES_BASE = "https://quotes-api.webull.com"
+_QUOTES_BASE = "https://api.webull.com"
 
 
 # ── HMAC-SHA1 signing ──────────────────────────────────────────────────────────
@@ -194,7 +194,7 @@ class WebullClient(BaseExchangeClient):
         """
         ticker = (token_id or market_id).upper().split("-")[0]
         uri    = "/quotes/ticker/queryTickers"
-        params = {"tickerIds": ticker, "includeSecu": "1"}
+        params = {"tickers": ticker, "includeSecu": "1"}
 
         try:
             headers = _sign_headers("GET", uri, body=None, queries=params)
@@ -336,7 +336,7 @@ class WebullClient(BaseExchangeClient):
     async def _get_instrument_id(self, ticker: str) -> Optional[str]:
         """Resolve ticker symbol to Webull numeric instrument_id."""
         uri    = "/quotes/ticker/queryTickers"
-        params = {"tickerIds": ticker, "includeSecu": "1"}
+        params = {"tickers": ticker, "includeSecu": "1"}
         try:
             headers = _sign_headers("GET", uri, body=None, queries=params)
             async with httpx.AsyncClient(timeout=6.0) as client:

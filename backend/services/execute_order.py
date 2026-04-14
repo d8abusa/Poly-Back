@@ -10,7 +10,10 @@ Every attempt is logged; failures alert and never crash the caller.
 """
 
 import logging
+import os
 from datetime import datetime, timezone
+
+_MAKER_OFFSET = float(os.getenv("LIMIT_MAKER_OFFSET_PCT", "0.001"))  # 0.1% below/above market
 
 from ..models.schemas import SignalSchema
 from . import signal_queue as sq
@@ -97,13 +100,21 @@ async def _submit_to_clob(signal: SignalSchema) -> dict:
     # Coinbase / Robinhood / Yahoo — standard product_id / size interface
     client = get_exchange_client(exchange)
 
-    # Coinbase BUY accepts USD (quote_size), but SELL requires base crypto units.
-    # suggested_size is always in USD, so convert for the SELL side.
-    # Also apply a 0.5% haircut on SELL: Coinbase deducts ~0.5-0.6% fee at fill
-    # time, so actual holdings are slightly less than the pre-fee calculation.
+    # Compute limit price first — needed to convert USD → base units for BUY.
+    limit_price: float | None = None
+    if signal.entry_price:
+        raw = float(signal.entry_price)
+        limit_price = raw * (1 - _MAKER_OFFSET) if signal.side.upper() == "BUY" else raw * (1 + _MAKER_OFFSET)
+
+    # suggested_size is always in USD; convert to base units for the exchange.
+    # BUY limit: divide by limit_price (fee buffer applied in coinbase_client).
+    # SELL: divide by entry_price with a 0.5% haircut for taker fees at fill time.
+    # Market BUY fallback: pass USD amount directly (routed as quote_size downstream).
     usd_size = float(signal.suggested_size)
     if signal.side.upper() == "SELL" and signal.entry_price:
         order_size = (usd_size / float(signal.entry_price)) * 0.995
+    elif signal.side.upper() == "BUY" and limit_price:
+        order_size = usd_size / limit_price
     else:
         order_size = usd_size
 
@@ -111,5 +122,5 @@ async def _submit_to_clob(signal: SignalSchema) -> dict:
         product_id=signal.market_id,
         side=signal.side.upper(),
         size=order_size,
-        limit_price=signal.entry_price if signal.entry_price else None,
+        limit_price=limit_price,
     )

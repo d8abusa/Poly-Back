@@ -25,6 +25,11 @@ log = logging.getLogger(__name__)
 COINBASE_BASE    = "https://api.coinbase.com/api/v3/brokerage"
 COINBASE_API_PFX = "/api/v3/brokerage"
 
+# Coinbase reserves base_size × limit_price + fees upfront for limit_limit_gtc orders.
+# Standard taker fee is 0.6%; we use 1.5% to also absorb any account holds or rounding.
+# Configurable via COINBASE_FEE_BUFFER env var.
+_FEE_BUFFER = float(os.getenv("COINBASE_FEE_BUFFER", "0.015"))
+
 # Well-known crypto base currencies — anything not in this set is treated as a stock
 _CRYPTO_BASES = {
     "BTC","ETH","SOL","ADA","AVAX","DOGE","MATIC","LINK","DOT","ATOM","XRP",
@@ -333,10 +338,13 @@ class CoinbaseClient(BaseExchangeClient):
 
         base_dec, price_dec = await self._get_precision(product_id)
 
-        if limit_price is not None:
+        if limit_price is not None and limit_price > 0:
+            # For BUY limit orders, reduce base_size by the fee buffer so that
+            # base_size × limit_price + fees fits within the available balance.
+            effective_size = size * (1 - _FEE_BUFFER) if side.upper() == "BUY" else size
             body["order_configuration"] = {
                 "limit_limit_gtc": {
-                    "base_size":   self._fmt(size, base_dec),
+                    "base_size":   self._fmt(effective_size, base_dec),
                     "limit_price": self._fmt(limit_price, price_dec),
                 }
             }
