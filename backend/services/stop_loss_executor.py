@@ -20,6 +20,7 @@ from .exchange_router import get_exchange_client
 from . import position_tracker as pt
 from . import alert_service as alerts
 from . import risk_manager as risk
+from . import compound_engine
 from .job_registry import registry
 
 log = logging.getLogger(__name__)
@@ -140,8 +141,11 @@ async def _check_positions() -> None:
                 })
                 continue
 
+            # Remap quote currency to match account denomination (e.g. XRP-USDC → XRP-USD)
+            from ..routes.signals import _order_product_id
+            close_product_id = _order_product_id(market_id) if exchange_id == "coinbase" else market_id
             result = await client.place_order(
-                product_id=market_id,
+                product_id=close_product_id,
                 side=close_side,
                 size=sell_size,
             )
@@ -164,6 +168,10 @@ async def _check_positions() -> None:
                     "price":        price,
                     "realized_pnl": realized,
                 })
+                # Compound engine: update HWM and optionally queue retrade
+                asyncio.create_task(
+                    compound_engine.on_position_closed(closed, close_reason)
+                )
         else:
             # Exchange failed — position stays open, loud alert
             alerts.send_alert_dict({

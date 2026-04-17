@@ -167,7 +167,7 @@ class PredictionMarketBacktester:
             self.equity_curve.append({
                 "date": date,
                 "value": round(portfolio_val, 4),
-                "price": round(prob, 4),
+                "price": prob,   # store full precision — micro-cap prices (PEPE etc) round to 0 at 4dp
             })
 
             if self.req.strategy == "threshold":
@@ -308,6 +308,9 @@ class PredictionMarketBacktester:
                 return
             rolling_high = max(lookback)
 
+            if rolling_high <= 0:
+                return
+
             if self.position == 0 and self.cash > 0 and not self._on_cooldown():
                 # Breakout: price exceeds rolling high by at least momentum_min%
                 breakout_pct = (prob - rolling_high) / rolling_high * 100.0
@@ -322,10 +325,11 @@ class PredictionMarketBacktester:
                 # Update trailing peak
                 self._stock_ref_high = max(self._stock_ref_high, prob)
                 # Trailing stop: price pulled back trail_pct% from peak
-                trail_drawdown = (self._stock_ref_high - prob) / self._stock_ref_high
-                if trail_drawdown >= trail_pct:
-                    self._sell(prob, date, note=f"trail stop -{trail_drawdown*100:.1f}% from peak")
-                elif stop is not None:
+                if self._stock_ref_high > 0:
+                    trail_drawdown = (self._stock_ref_high - prob) / self._stock_ref_high
+                    if trail_drawdown >= trail_pct:
+                        self._sell(prob, date, note=f"trail stop -{trail_drawdown*100:.1f}% from peak")
+                if stop is not None and self.avg_entry > 0 and self.position > 0:
                     loss = (self.avg_entry - prob) / self.avg_entry
                     if loss >= stop:
                         self._sell(prob, date, forced=True, note=f"hard stop -{loss*100:.1f}%")

@@ -272,8 +272,9 @@ class SignalSchema(BaseModel):
     status:          SignalStatus  = SignalStatus.pending
     created_at:      str  = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     resolved_at:     Optional[str] = None
-    exchange:        str  = "polymarket"   # originating exchange
-    asset_type:      str  = "prediction_market"  # stock | crypto | prediction_market
+    exchange:         str  = "polymarket"   # originating exchange
+    asset_type:       str  = "prediction_market"  # stock | crypto | prediction_market
+    rejection_reason: Optional[str] = None
 
 
 class StageFromBacktestRequest(BaseModel):

@@ -52,17 +52,18 @@ def _upsert(sig: SignalSchema) -> None:
             INSERT INTO signals
                 (id, status, market_id, market_title, strategy, side, entry_price,
                  target_price, stop_loss, suggested_size, suggested_shares,
-                 execution_mode, created_at, resolved_at, asset_type, payload)
+                 execution_mode, created_at, resolved_at, asset_type, rejection_reason, payload)
             VALUES
                 (%(id)s, %(status)s, %(market_id)s, %(market_title)s, %(strategy)s,
                  %(side)s, %(entry_price)s, %(target_price)s, %(stop_loss)s,
                  %(suggested_size)s, %(suggested_shares)s, %(execution_mode)s,
-                 %(created_at)s, %(resolved_at)s, %(asset_type)s, %(payload)s)
+                 %(created_at)s, %(resolved_at)s, %(asset_type)s, %(rejection_reason)s, %(payload)s)
             ON CONFLICT (id) DO UPDATE SET
                 status=EXCLUDED.status,
                 resolved_at=EXCLUDED.resolved_at,
                 suggested_size=EXCLUDED.suggested_size,
                 asset_type=EXCLUDED.asset_type,
+                rejection_reason=EXCLUDED.rejection_reason,
                 payload=EXCLUDED.payload
         """, row)
 
@@ -95,13 +96,15 @@ def approve_signal(signal_id: str, modified_size: Optional[int] = None) -> Optio
     return sig
 
 
-def reject_signal(signal_id: str) -> Optional[SignalSchema]:
+def reject_signal(signal_id: str, reason: Optional[str] = None) -> Optional[SignalSchema]:
     _ensure_loaded()
     sig = _pending.pop(signal_id, None)
     if sig is None:
         return None
     sig.status = "rejected"
     sig.resolved_at = datetime.now(timezone.utc).isoformat()
+    if reason:
+        sig.rejection_reason = reason
     _upsert(sig)
     _rejected.append(sig)
     return sig

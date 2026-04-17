@@ -299,6 +299,12 @@ def init_db() -> None:
                     exchange TEXT NOT NULL DEFAULT 'polymarket';
             """)
 
+            # Add rejection_reason to signals if not present
+            cur.execute("""
+                ALTER TABLE signals ADD COLUMN IF NOT EXISTS
+                    rejection_reason TEXT;
+            """)
+
 
 # ── Cursor helper (returns RealDict rows — no row_to_dict needed) ─────────────
 
@@ -344,6 +350,7 @@ def signal_to_row(sig) -> dict:
         "created_at":       data.get("created_at"),
         "resolved_at":      data.get("resolved_at"),
         "asset_type":       asset_type,
+        "rejection_reason": data.get("rejection_reason"),
         "payload":          json.dumps(data),
     }
 

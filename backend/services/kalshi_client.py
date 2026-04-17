@@ -117,14 +117,19 @@ class KalshiClient(BaseExchangeClient):
         self._api_key     = api_key
         self._private_key = private_key  # PEM string with literal \n
 
+    # Kalshi expects the signature to cover the full path including the API prefix
+    _PATH_PREFIX = "/trade-api/v2"
+
     def _auth_headers(self, method: str, path: str) -> dict:
         """Build RSA-PSS signed headers for authenticated Kalshi endpoints."""
         if not self._api_key or not self._private_key:
             log.warning("Kalshi auth headers requested but credentials missing")
             return {}
         ts = int(_time.time() * 1000)
+        # Signature message must use the full path: /trade-api/v2/portfolio/...
+        full_path = path if path.startswith(self._PATH_PREFIX) else f"{self._PATH_PREFIX}{path}"
         try:
-            sig = _build_kalshi_signature(method, path, ts, self._private_key)
+            sig = _build_kalshi_signature(method, full_path, ts, self._private_key)
         except Exception as exc:
             log.error("Kalshi signature build failed: %s", exc)
             return {}
@@ -231,13 +236,15 @@ class KalshiClient(BaseExchangeClient):
         ticker      = token_id or market_id
         series      = _series_from_ticker(ticker)
         end_ts      = int(_time.time())
-        start_ts    = end_ts - (2 * 365 * 24 * 3600)  # max = 2 years
-
         _interval_map = {
             "1m": 1, "5m": 5, "15m": 15, "30m": 30,
             "1h": 60, "6h": 360, "1d": 1440, "max": 1440,
         }
         period_interval = _interval_map.get(interval, 1440)
+
+        # Kalshi caps responses at 5,000 candles — compute start_ts accordingly
+        _MAX_CANDLES = 5000
+        start_ts = end_ts - (_MAX_CANDLES * period_interval * 60)
 
         params = {"start_ts": start_ts, "end_ts": end_ts, "period_interval": period_interval}
         url    = f"{KALSHI_BASE}/series/{series}/markets/{ticker}/candlesticks"
