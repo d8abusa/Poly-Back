@@ -4,9 +4,9 @@
 agent:
   name: "LENS"
   role: "Market Data Collection & Analysis"
-  model: "claude-opus-4-6"
+  model: "gemma4:31b"
   temperature: 0.3
-  max_tokens: 4096
+  max_tokens: 16384
 
 system_prompt: |
   You are LENS, the Market Intelligence and Data Analyst for PolyBack.

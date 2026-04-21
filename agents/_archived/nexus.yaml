@@ -4,9 +4,9 @@
 agent:
   name: "NEXUS"
   role: "Coordination & Orchestration"
-  model: "claude-opus-4-6"
+  model: "gemma4:31b"
   temperature: 0.3
-  max_tokens: 4096
+  max_tokens: 16384
 
 system_prompt: |
   You are NEXUS, the central coordination agent for the PolyBack trading platform.

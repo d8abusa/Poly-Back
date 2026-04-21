@@ -1,0 +1,273 @@
+Agent build instructions
+TASK: Build a multi-agent system for the PolyBack platform 
+using OpenClaw on a local server.
+
+You are NOT roleplaying any of these agents. You are a 
+software engineer. Your job is to read the agent 
+specifications below and build the infrastructure that 
+creates, configures, and connects them as autonomous 
+software agents in an OpenClaw installation.
+
+═══════════════════════════════════════════════════════════
+WHAT YOU ARE BUILDING
+═══════════════════════════════════════════════════════════
+
+A local multi-agent system consisting of five agents:
+
+  NEXUS   — Master Orchestrator
+  AXIOM   — Quantitative Research Engine  
+  FORGE   — Full-Stack Engineering Lead
+  LENS    — Market Intelligence & Data Analyst
+  HARBOR  — Risk Management & System Integrity
+
+Each agent is a discrete, persistent Claude-powered process 
+running inside OpenClaw. Each has its own system prompt, 
+tool access scope, and message queue. NEXUS is the only 
+agent that communicates directly with the user. The other 
+four agents communicate via NEXUS or via structured 
+inter-agent handoff blocks.
+
+═══════════════════════════════════════════════════════════
+YOUR DELIVERABLES
+═══════════════════════════════════════════════════════════
+
+1. OPENCLAW AGENT CONFIG FILES
+   Create one configuration file per agent:
+
+     agents/nexus.yaml
+     agents/axiom.yaml
+     agents/forge.yaml
+     agents/lens.yaml
+     agents/harbor.yaml
+
+   Each config file must define:
+     - agent_id:        unique identifier (lowercase)
+     - display_name:    human-readable name
+     - model:           claude-opus-4-5 (NEXUS, HARBOR) or
+                        claude-sonnet-4-5 (AXIOM, FORGE, LENS)
+     - system_prompt:   full system prompt (from specs below)
+     - tools:           list of permitted tool names
+     - memory:          session | persistent
+     - max_tokens:      8192
+     - temperature:     0.2 for HARBOR/FORGE, 0.4 for others
+
+2. TOOL DEFINITIONS
+   Create tool definition files for each agent's permitted 
+   tool scope:
+
+     tools/file_read.yaml      — read files from project dir
+     tools/file_write.yaml     — write to docs/ subdirs only
+     tools/bash_read.yaml      — read-only shell commands
+     tools/bash_exec.yaml      — execute shell commands
+                                 (FORGE only)
+     tools/api_get.yaml        — HTTP GET requests
+                                 (LENS, HARBOR)
+     tools/api_post.yaml       — HTTP POST requests
+                                 (HARBOR/FORGE with 
+                                 HARBOR sign-off only)
+
+3. MESSAGE ROUTING LAYER
+   Create a router module that:
+
+     router/nexus_router.py
+
+   This module must:
+   - Accept all incoming user messages and pass to NEXUS
+   - Parse structured handoff blocks from any agent output:
+       [FORGE_REQUEST] ... [/FORGE_REQUEST]
+       [HARBOR_REQUEST] ... [/HARBOR_REQUEST]
+       [HARBOR_REVIEW] ... [/HARBOR_REVIEW]
+       [AXIOM_REQUEST] ... [/AXIOM_REQUEST]
+       [AXIOM_INTELLIGENCE] ... [/AXIOM_INTELLIGENCE]
+       [LENS_REQUEST] ... [/LENS_REQUEST]
+       [LENS_ALERT] ... [/LENS_ALERT]
+       [HARBOR_ALERT] ... [/HARBOR_ALERT]
+       [AXIOM_RISK_FLAG] ... [/AXIOM_RISK_FLAG]
+       [LENS_RISK_REQUEST] ... [/LENS_RISK_REQUEST]
+       [FORGE_RISK_REQUEST] ... [/FORGE_RISK_REQUEST]
+       [FORGE_PIPELINE_ISSUE] ... [/FORGE_PIPELINE_ISSUE]
+       [HARBOR HALT — ALL] ... [/HARBOR HALT]
+   - Route each parsed block to the correct destination 
+     agent's input queue
+   - Log all routing events to logs/routing.log
+
+4. STARTUP SCRIPT
+   Create a startup script:
+
+     start_agents.sh
+
+   This script must:
+   - Verify OpenClaw is installed and reachable
+   - Verify PolyBack backend is running on port 8000
+   - Verify PolyBack frontend is running on port 5173
+   - Start all five agents in the correct order:
+       1. HARBOR  (risk layer first)
+       2. LENS    (data layer second)
+       3. AXIOM   (research layer third)
+       4. FORGE   (engineering layer fourth)
+       5. NEXUS   (orchestrator last)
+   - Confirm each agent is healthy before starting the next
+   - Send the session startup message to NEXUS on success:
+       "NEXUS, run startup sequence. Backend is at 
+        http://localhost:8000, frontend at 
+        http://localhost:5173. Initialize all four agents 
+        and give me the Daily Team Briefing."
+   - Write PID file for each agent to pids/
+
+5. SESSION PERSISTENCE
+   Create a persistence handler:
+
+     session/persist.py
+
+   This module must:
+   - Capture NEXUS's "END OF SESSION SUMMARY" block 
+     at session close
+   - Write it to session/last_session.md
+   - On next startup, prepend the last session summary 
+     to NEXUS's context window automatically
+   - Maintain a rolling log of all session summaries 
+     in session/history/
+
+6. DIRECTORY STRUCTURE
+   Create the following directory structure under the 
+   project root (~/quant_project/Polymarket/agents/):
+
+     agents/
+       nexus.yaml
+       axiom.yaml
+       forge.yaml
+       lens.yaml
+       harbor.yaml
+     tools/
+       file_read.yaml
+       file_write.yaml
+       bash_read.yaml
+       bash_exec.yaml
+       api_get.yaml
+       api_post.yaml
+     router/
+       nexus_router.py
+     session/
+       persist.py
+       last_session.md     (created on first close)
+       history/            (rolling session archive)
+     logs/
+       routing.log
+       agents/             (one log per agent)
+     pids/                 (agent PID files)
+     docs/
+       research/           (AXIOM outputs)
+       strategies/         (strategy specs)
+       intelligence/       (LENS briefings)
+       market-data/        (LENS category stats)
+       risk/               (HARBOR decisions and logs)
+       team/               (NEXUS session logs)
+     start_agents.sh
+     stop_agents.sh
+
+7. STOP SCRIPT
+   Create a clean shutdown script:
+
+     stop_agents.sh
+
+   This script must:
+   - Signal NEXUS to produce an End of Session Summary
+   - Wait for NEXUS to write the summary to session/
+   - Shut down agents in reverse startup order:
+       NEXUS → FORGE → AXIOM → LENS → HARBOR
+   - Confirm clean shutdown of each before proceeding
+   - Clean up PID files
+
+═══════════════════════════════════════════════════════════
+TOOL ACCESS MATRIX
+═══════════════════════════════════════════════════════════
+
+Use this matrix when writing each agent's config. Only 
+assign tools that are explicitly listed for that agent.
+
+  Tool              NEXUS  AXIOM  FORGE  LENS  HARBOR
+  ──────────────────────────────────────────────────
+  file_read           ✓      ✓      ✓      ✓      ✓
+  file_write          ✓      ✓      ✓      ✓      ✓
+  bash_read           ✓      ✓      ✓      ✓      ✓
+  bash_exec           ✗      ✗      ✓      ✗      ✗
+  api_get             ✓      ✗      ✗      ✓      ✓
+  api_post            ✗      ✗      ✓      ✗      ✓
+
+Note: HARBOR's api_post access is restricted to the 
+PolyBack positions endpoint only (close position). 
+FORGE's api_post is unrestricted within localhost.
+
+═══════════════════════════════════════════════════════════
+SYSTEM PROMPT SOURCE
+═══════════════════════════════════════════════════════════
+
+The full system prompt for each agent is already defined. 
+Load each one from these source files and embed verbatim 
+into the corresponding agent YAML config:
+
+  NEXUS system prompt  →  docs/prompts/nexus.md
+  AXIOM system prompt  →  docs/prompts/axiom.md
+  FORGE system prompt  →  docs/prompts/forge.md
+  LENS system prompt   →  docs/prompts/lens.md
+  HARBOR system prompt →  docs/prompts/harbor.md
+
+If these files do not exist yet, create them from the 
+system prompt content provided in this session before 
+building the YAML configs.
+
+═══════════════════════════════════════════════════════════
+OPENCLAW-SPECIFIC REQUIREMENTS
+═══════════════════════════════════════════════════════════
+
+- Use OpenClaw's native agent YAML schema for all configs
+- Each agent must register with the OpenClaw agent registry 
+  on startup
+- Inter-agent messages must use OpenClaw's message passing 
+  API — do not use direct function calls between agents
+- Each agent runs as an independent process — no shared 
+  memory between agents except via the message queue
+- NEXUS is the only agent registered as a "user-facing" 
+  agent in OpenClaw — all others are "background" agents
+- All agent logs must route to OpenClaw's centralized 
+  logging interface as well as local log files
+
+═══════════════════════════════════════════════════════════
+WHAT YOU ARE NOT DOING
+═══════════════════════════════════════════════════════════
+
+- You are NOT simulating or roleplaying any of these agents
+- You are NOT acting as NEXUS, AXIOM, FORGE, LENS, or 
+  HARBOR in this conversation
+- You are NOT generating example agent responses or 
+  demonstrating how they would behave
+- You are NOT having a conversation as if you were one 
+  of these agents
+- You ARE writing configuration files, Python modules, 
+  shell scripts, and directory structures that will run 
+  these agents as real software processes on a local server
+
+If you are ever unsure whether a task is "build the 
+agent system" or "be an agent" — it is always 
+"build the agent system."
+
+═══════════════════════════════════════════════════════════
+BEGIN
+═══════════════════════════════════════════════════════════
+
+Start by:
+  1. Confirming you understand you are building software, 
+     not roleplaying
+  2. Checking whether OpenClaw is installed and what 
+     version is present
+  3. Creating the directory structure
+  4. Writing the system prompt source files to docs/prompts/
+  5. Building the agent YAML configs
+  6. Building the tool definition files
+  7. Building the router module
+  8. Building the startup and stop scripts
+  9. Building the session persistence handler
+  10. Running start_agents.sh to verify the system comes 
+      up cleanly
+
+Report status after each step.
